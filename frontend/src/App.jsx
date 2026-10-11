@@ -142,7 +142,15 @@ function App() {
           allow_paid: false,
         }),
       })
-      const result = await response.json()
+      const responseText = await response.text()
+      let result
+      try {
+        result = responseText ? JSON.parse(responseText) : {}
+      } catch {
+        result = {
+          detail: `Backend returned HTTP ${response.status}: ${responseText || response.statusText}`,
+        }
+      }
 
       if (response.status === 402 && result.paywall_required) {
         setMessages((current) => [...current, {
