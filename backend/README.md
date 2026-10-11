@@ -23,8 +23,14 @@ available) and `required_context_tokens`; estimated input plus requested output
 tokens always sets the minimum required context.
 
 The gateway estimates tokens and task complexity locally before routing. Token
-counts are approximate because provider tokenizers differ. It rejects models
-that fail modality, price, context, or measured-latency constraints, ranks the
+counts are approximate because provider tokenizers differ. Ambiguous short
+prompts default to medium complexity instead of being assumed simple. Medium
+and high complexity apply minimum Artificial Analysis benchmark floors of 30
+and 40 respectively; a caller-specified floor can only raise that minimum.
+Models without the relevant benchmark are rejected when a floor applies. These
+heuristics are conservative estimates, not a substitute for an explicit
+capability requirement. The router rejects models that fail modality, price,
+context, capability, availability, or measured-latency constraints, ranks the
 survivors, and shares one latency deadline across inference attempts. Unknown
 catalogue latency is not presumed fast; the live deadline remains a hard limit.
 Supported attachments are text, PDF, and image files. PDFs and images are only
@@ -34,8 +40,14 @@ Routing decisions, rejection reasons, model attempts, and cost/latency
 metadata are appended to `data/routing_logs.jsonl`. User prompt and response
 contents are deliberately not written to the routing log.
 
-For routing demonstrations, create or edit `data/model_overrides.json`.
-Overrides are reloaded for every chat request, without restarting the server:
+For routing demonstrations, use the frontend's **Judge controls** panel to
+change a model's availability or simulated latency. Overrides persist in
+`data/model_overrides.json`, are reloaded for every chat request, and can be
+reset to catalogue defaults from the panel. The judge-control endpoints accept
+changes only from loopback clients; do not remove that restriction when
+exposing the backend to a network.
+
+Overrides can also be edited directly in `data/model_overrides.json`:
 
 ```json
 {
@@ -48,8 +60,10 @@ Overrides are reloaded for every chat request, without restarting the server:
 
 Set `available` to `false` to hard-reject a model, or set a latency above a
 request's budget to force selection of another valid candidate. Use `null` for
-`measured_latency_ms` to remove a latency measurement. Overrides are local
-operator controls and are not exposed as an unauthenticated API.
+`measured_latency_ms` to remove a latency measurement.
+
+Assistant responses are rendered as Markdown with GitHub-flavored tables and
+lists. Raw HTML is not enabled.
 
 Run the focused offline routing tests from this directory:
 

@@ -4,6 +4,10 @@ from typing import Any
 
 
 TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+SIMPLE_PROMPT_PATTERN = re.compile(
+    r"^\s*(?:hi|hello|hey|thanks|thank you|good morning|good evening)[!. ]*\s*$",
+    re.IGNORECASE,
+)
 COMPLEXITY_CUES = {
     "reasoning": (
         "analyze", "analyse", "compare", "evaluate", "prove", "debug",
@@ -15,6 +19,16 @@ COMPLEXITY_CUES = {
         "full document", "full text", "entire text", "entire conversation"
     ),
 }
+COMPLEXITY_CAPABILITY_FLOORS = {
+    "low": None,
+    "medium": 30.0,
+    "high": 40.0,
+}
+
+
+def complexity_capability_floor(complexity: str) -> float | None:
+    """Return the conservative benchmark floor for an estimated complexity."""
+    return COMPLEXITY_CAPABILITY_FLOORS[complexity]
 
 
 def estimate_tokens(text: str) -> int:
@@ -42,13 +56,29 @@ def analyze_prompt(
         cue for cue in COMPLEXITY_CUES["long_context"] if cue in normalized
     ]
     input_tokens = prompt_tokens + file_token_estimate
+    complexity_signals = []
+    if input_tokens > 12_000:
+        complexity_signals.append("input_tokens_over_12000")
+    if long_context_signals:
+        complexity_signals.extend(long_context_signals)
+    if reasoning_signals:
+        complexity_signals.extend(reasoning_signals)
+    if file_count:
+        complexity_signals.append("attached_files")
 
     if input_tokens > 12_000 or long_context_signals:
         complexity = "high"
-    elif input_tokens > 2_500 or reasoning_signals:
+        complexity_confidence = "high"
+    elif input_tokens > 2_500 or reasoning_signals or file_count:
         complexity = "medium"
-    else:
+        complexity_confidence = "medium"
+    elif SIMPLE_PROMPT_PATTERN.match(normalized):
         complexity = "low"
+        complexity_confidence = "high"
+    else:
+        complexity = "medium"
+        complexity_confidence = "low"
+        complexity_signals.append("ambiguous_prompt_defaulted_to_medium")
 
     task = "general"
     if any(cue in normalized for cue in ("code", "program", "debug", "function")):
@@ -67,6 +97,9 @@ def analyze_prompt(
         "prompt_tokens": prompt_tokens,
         "file_tokens": file_token_estimate,
         "complexity": complexity,
+        "complexity_confidence": complexity_confidence,
+        "complexity_signals": list(dict.fromkeys(complexity_signals)),
+        "automatic_min_capability": complexity_capability_floor(complexity),
         "task": task,
         "reasoning_signals": reasoning_signals,
         "long_context_signals": long_context_signals,

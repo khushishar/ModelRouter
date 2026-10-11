@@ -1,5 +1,9 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.pyc
-data/
+data/model_overrides.json
+data/routing_logs.jsonl
+data/*.tmp

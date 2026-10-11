@@ -49,6 +49,18 @@ class ChatRequest(BaseModel):
     required_context_tokens: int | None = Field(default=None, gt=0)
 
 
+class JudgeOverrideRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=255)
+    available: bool
+    measured_latency_ms: float | None = Field(
+        default=None, ge=0, le=120_000, allow_inf_nan=False
+    )
+
+
+class JudgeOverrideResetRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=255)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     application.state.registry = ModelRegistry()
@@ -88,6 +100,92 @@ def _write_log(event: dict[str, Any]) -> None:
     ROUTING_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with ROUTING_LOG_PATH.open("a", encoding="utf-8") as log_file:
         log_file.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+
+
+def _require_loopback_judge(request: Request) -> None:
+    client_host = request.client.host if request.client else None
+    if client_host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Judge controls are only available from this machine.",
+        )
+
+
+@app.get("/api/judge/models")
+async def judge_models(http_request: Request) -> dict[str, Any]:
+    _require_loopback_judge(http_request)
+    registry: ModelRegistry | None = getattr(app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Model catalogue is not ready.")
+    overrides = registry.get_overrides()
+    models = registry.list_models()
+    return {
+        "models": [
+            {
+                "id": model["id"],
+                "name": model.get("name", model["id"]),
+                "available": model.get("available", True),
+                "measured_latency_ms": model.get(
+                    "measured_latency_ms",
+                    (model.get("modelrouter_metrics") or {}).get(
+                        "median_latency_ms"
+                    ),
+                ),
+                "overridden": model["id"] in overrides,
+            }
+            for model in models
+        ]
+    }
+
+
+@app.post("/api/judge/overrides")
+async def set_judge_override(
+    http_request: Request,
+    override: JudgeOverrideRequest,
+) -> dict[str, str]:
+    _require_loopback_judge(http_request)
+    registry: ModelRegistry | None = getattr(app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Model catalogue is not ready.")
+    try:
+        registry.set_override(
+            override.model_id,
+            available=override.available,
+            measured_latency_ms=override.measured_latency_ms,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown model ID.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _write_log({
+        "event": "judge_override_updated",
+        "model_id": override.model_id,
+        "available": override.available,
+        "measured_latency_ms": override.measured_latency_ms,
+        "timestamp": time.time(),
+    })
+    return {"status": "updated"}
+
+
+@app.post("/api/judge/overrides/reset")
+async def reset_judge_override(
+    http_request: Request,
+    override: JudgeOverrideResetRequest,
+) -> dict[str, str]:
+    _require_loopback_judge(http_request)
+    registry: ModelRegistry | None = getattr(app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Model catalogue is not ready.")
+    try:
+        registry.clear_override(override.model_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown model ID.") from exc
+    _write_log({
+        "event": "judge_override_reset",
+        "model_id": override.model_id,
+        "timestamp": time.time(),
+    })
+    return {"status": "reset"}
 
 
 def _decode_attachment(attachment: Attachment) -> tuple[str, bytes | None]:
@@ -292,13 +390,21 @@ async def chat(http_request: Request, request: ChatRequest) -> Any:
         analysis["estimated_input_tokens"] + output_estimate,
         request.required_context_tokens or 0,
     )
+    automatic_capability = analysis["automatic_min_capability"]
+    capability_floors = [
+        value for value in (request.min_capability, automatic_capability)
+        if value is not None
+    ]
+    effective_min_capability = (
+        max(capability_floors) if capability_floors else None
+    )
     models = registry.list_models()
 
     def filter_models(free_only: bool, paid_consent: bool):
         return run_pipeline(
             models,
             task="general" if analysis["task"] == "reasoning" else analysis["task"],
-            min_capability=request.min_capability,
+            min_capability=effective_min_capability,
             input_modalities=modalities,
             output_modality="text",
             free_only=free_only,
@@ -325,7 +431,9 @@ async def chat(http_request: Request, request: ChatRequest) -> Any:
         "constraints": {
             "input_modalities": modalities,
             "required_context_tokens": required_context,
-            "min_capability": request.min_capability,
+            "min_capability": effective_min_capability,
+            "requested_min_capability": request.min_capability,
+            "automatic_min_capability": automatic_capability,
             "max_output_tokens": output_estimate,
             "max_latency_ms": request.max_latency_ms,
             "max_cost_usd": request.max_cost_usd,

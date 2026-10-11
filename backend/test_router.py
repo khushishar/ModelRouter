@@ -2,7 +2,7 @@ import unittest
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
@@ -31,6 +31,9 @@ def model(
         },
         "pricing": {"prompt": price, "completion": price},
         "supported_parameters": ["reasoning"] if reasoning else [],
+        "benchmarks": {
+            "artificial_analysis": {"intelligence_index": 35}
+        },
     }
     if latency is not None:
         result["modelrouter_metrics"] = {"median_latency_ms": latency}
@@ -57,6 +60,26 @@ class EstimatorTests(unittest.TestCase):
         self.assertEqual(modalities, ["pdf"])
         self.assertEqual(message["content"][0]["type"], "file")
         self.assertGreaterEqual(file_tokens, 1024)
+
+    def test_ambiguous_short_prompt_defaults_to_medium_safety_tier(self):
+        result = analyze_prompt("What is a quasar?")
+        self.assertEqual(result["complexity"], "medium")
+        self.assertEqual(result["complexity_confidence"], "low")
+        self.assertEqual(result["automatic_min_capability"], 30)
+        self.assertIn(
+            "ambiguous_prompt_defaulted_to_medium",
+            result["complexity_signals"],
+        )
+
+    def test_long_or_complex_input_uses_higher_capability_floor(self):
+        result = analyze_prompt("Review the entire contract carefully.")
+        self.assertEqual(result["complexity"], "high")
+        self.assertEqual(result["automatic_min_capability"], 40)
+
+    def test_unambiguously_simple_greeting_has_no_automatic_floor(self):
+        result = analyze_prompt("Hello!")
+        self.assertEqual(result["complexity"], "low")
+        self.assertIsNone(result["automatic_min_capability"])
 
 
 class ConstraintTests(unittest.TestCase):
@@ -181,6 +204,65 @@ class RegistryOverrideTests(unittest.TestCase):
                 self.assertTrue(updated["available"])
                 self.assertEqual(updated["measured_latency_ms"], 125)
 
+    def test_registry_can_save_and_reset_judge_overrides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            catalogue_path = Path(directory) / "catalogue.json"
+            overrides_path = Path(directory) / "overrides.json"
+            catalogue_path.write_text(
+                json.dumps({"data": [{
+                    "id": "test/model",
+                    "context_length": 4096,
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "output_modalities": ["text"],
+                    },
+                    "pricing": {"prompt": "0", "completion": "0"},
+                }]}),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(model_registry, "CATALOGUE_PATH", catalogue_path),
+                patch.object(model_registry, "MODEL_OVERRIDES_PATH", overrides_path),
+            ):
+                registry = model_registry.ModelRegistry()
+                registry.set_override(
+                    "test/model",
+                    available=False,
+                    measured_latency_ms=9000,
+                )
+                overridden = registry.list_models()[0]
+                self.assertFalse(overridden["available"])
+                self.assertEqual(overridden["measured_latency_ms"], 9000)
+                registry.clear_override("test/model")
+                self.assertTrue(registry.list_models()[0]["available"])
+                self.assertEqual(registry.get_overrides(), {})
+
+    def test_registry_rejects_invalid_latency_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            catalogue_path = Path(directory) / "catalogue.json"
+            overrides_path = Path(directory) / "overrides.json"
+            catalogue_path.write_text(
+                json.dumps({"data": [{
+                    "id": "test/model",
+                    "context_length": 4096,
+                    "architecture": {},
+                    "pricing": {"prompt": "0", "completion": "0"},
+                }]}),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(model_registry, "CATALOGUE_PATH", catalogue_path),
+                patch.object(model_registry, "MODEL_OVERRIDES_PATH", overrides_path),
+            ):
+                registry = model_registry.ModelRegistry()
+                with self.assertRaises(ValueError):
+                    registry.set_override(
+                        "test/model",
+                        available=True,
+                        measured_latency_ms=float("inf"),
+                    )
+
+
 
 class InferenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_failover_uses_next_candidate_after_timeout(self):
@@ -262,6 +344,93 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["answer"], "Hello.")
         self.assertEqual(response.json()["selected_model"], "test/free")
         self.assertIn("analysis", response.json())
+
+    async def test_judge_endpoints_list_update_and_reset_models(self):
+        registry = type("Registry", (), {})()
+        registry.models = [model("test/free", latency=100)]
+        registry.list_models = lambda: registry.models
+        registry.get_overrides = lambda: {}
+        registry.set_override = Mock()
+        registry.clear_override = Mock()
+        api.app.state.registry = registry
+
+        listed = await self.client.get("/api/judge/models")
+        saved = await self.client.post(
+            "/api/judge/overrides",
+            json={
+                "model_id": "test/free",
+                "available": False,
+                "measured_latency_ms": 9000,
+            },
+        )
+        reset = await self.client.post(
+            "/api/judge/overrides/reset",
+            json={"model_id": "test/free"},
+        )
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["models"][0]["measured_latency_ms"], 100)
+        self.assertEqual(saved.status_code, 200)
+        registry.set_override.assert_called_once_with(
+            "test/free",
+            available=False,
+            measured_latency_ms=9000,
+        )
+        self.assertEqual(reset.status_code, 200)
+        registry.clear_override.assert_called_once_with("test/free")
+
+    async def test_judge_mutations_reject_non_loopback_clients(self):
+        remote_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(
+                app=api.app,
+                client=("192.0.2.10", 12345),
+            ),
+            base_url="http://test",
+        )
+        try:
+            response = await remote_client.post(
+                "/api/judge/overrides",
+                json={
+                    "model_id": "test/free",
+                    "available": False,
+                    "measured_latency_ms": 9000,
+                },
+            )
+        finally:
+            await remote_client.aclose()
+
+        self.assertEqual(response.status_code, 403)
+
+    async def test_chat_applies_automatic_capability_floor_for_ambiguous_prompt(self):
+        weak = model("test/weak")
+        weak["benchmarks"]["artificial_analysis"]["intelligence_index"] = 29
+        strong = model("test/strong")
+        strong["benchmarks"]["artificial_analysis"]["intelligence_index"] = 30
+        api.app.state.registry.models = [weak, strong]
+        generate = AsyncMock(return_value={
+            "model": "test/strong",
+            "content": "A quasar is a bright active galactic nucleus.",
+            "latency_ms": 24,
+            "total_latency_ms": 24,
+            "usage": {"prompt_tokens": 6, "completion_tokens": 10},
+            "attempts": [{"model": "test/strong", "success": True}],
+        })
+        with patch.object(api, "generate_response", generate):
+            response = await self.client.post(
+                "/api/chat",
+                json={"prompt": "What is a quasar?"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["constraints"]["min_capability"], 30)
+        self.assertEqual(payload["analysis"]["complexity_confidence"], "low")
+        self.assertEqual(payload["selected_model"], "test/strong")
+        rejected_weak = next(item for item in payload["rejected"] if item["id"] == "test/weak")
+        self.assertTrue(any(
+            reason["constraint"] == "capability"
+            for reason in rejected_weak["reasons"]
+        ))
 
     async def test_only_paid_candidates_require_consent(self):
         api.app.state.registry.models = [model("test/paid", price="0.000001")]

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -52,6 +54,14 @@ function App() {
   const [error, setError] = useState('')
   const [health, setHealth] = useState(null)
   const [allowPaid, setAllowPaid] = useState(false)
+  const [judgeOpen, setJudgeOpen] = useState(false)
+  const [judgeModels, setJudgeModels] = useState([])
+  const [judgeModelId, setJudgeModelId] = useState('')
+  const [judgeAvailable, setJudgeAvailable] = useState(true)
+  const [judgeLatency, setJudgeLatency] = useState('')
+  const [judgeBusy, setJudgeBusy] = useState(false)
+  const [judgeMessage, setJudgeMessage] = useState('')
+  const [judgeError, setJudgeError] = useState('')
   const fileInput = useRef(null)
   const messageEnd = useRef(null)
   const promptInput = useRef(null)
@@ -136,6 +146,75 @@ function App() {
     }
   }
 
+  async function refreshJudgeModels() {
+    try {
+      const response = await fetch(`${API_BASE}/api/judge/models`)
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.detail || 'Could not load judge controls.')
+      }
+      setJudgeModels(result.models)
+      const selected = result.models.find((item) => item.id === judgeModelId)
+        || result.models[0]
+      if (selected) {
+        setJudgeModelId(selected.id)
+        setJudgeAvailable(selected.available)
+        setJudgeLatency(selected.measured_latency_ms ?? '')
+      }
+      setJudgeError('')
+    } catch (requestError) {
+      setJudgeError(requestError.message || 'Could not load judge controls.')
+    }
+  }
+
+  async function saveJudgeOverride() {
+    if (!judgeModelId || judgeBusy) return
+    setJudgeBusy(true)
+    setJudgeMessage('')
+    setJudgeError('')
+    try {
+      const response = await fetch(`${API_BASE}/api/judge/overrides`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_id: judgeModelId,
+          available: judgeAvailable,
+          measured_latency_ms: judgeLatency === '' ? null : Number(judgeLatency),
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || 'Could not save override.')
+      await refreshJudgeModels()
+      setJudgeMessage('Override saved. It will affect the next routing request.')
+    } catch (requestError) {
+      setJudgeError(requestError.message || 'Could not save override.')
+    } finally {
+      setJudgeBusy(false)
+    }
+  }
+
+  async function resetJudgeOverride() {
+    if (!judgeModelId || judgeBusy) return
+    setJudgeBusy(true)
+    setJudgeMessage('')
+    setJudgeError('')
+    try {
+      const response = await fetch(`${API_BASE}/api/judge/overrides/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_id: judgeModelId }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || 'Could not reset override.')
+      await refreshJudgeModels()
+      setJudgeMessage('Override reset to catalogue defaults.')
+    } catch (requestError) {
+      setJudgeError(requestError.message || 'Could not reset override.')
+    } finally {
+      setJudgeBusy(false)
+    }
+  }
+
   async function handleFiles(event) {
     const selected = Array.from(event.target.files || [])
     setFiles((current) => [...current, ...selected].slice(0, 10))
@@ -161,8 +240,88 @@ function App() {
               ? `${health.model_count.toLocaleString()} models`
               : health?.status === 'offline' ? 'Backend offline' : 'Connecting'}
           </span>
+          <button
+            className="new-chat-button judge-toggle"
+            type="button"
+            aria-expanded={judgeOpen}
+            onClick={() => {
+              const opening = !judgeOpen
+              setJudgeOpen(opening)
+              if (opening) refreshJudgeModels()
+            }}
+          >
+            Judge controls
+          </button>
         </div>
       </header>
+
+      {judgeOpen && (
+        <section className="judge-panel" aria-label="Judge model controls">
+          <div className="judge-panel-heading">
+            <div>
+              <h2>Judge controls</h2>
+              <p>Simulate model availability and latency for the next routing decision.</p>
+            </div>
+            <span>Local machine only</span>
+          </div>
+          <div className="judge-controls">
+            <label>
+              <span>Model</span>
+              <select
+                value={judgeModelId}
+                onChange={(event) => {
+                  const selected = judgeModels.find((item) => item.id === event.target.value)
+                  setJudgeModelId(event.target.value)
+                  setJudgeAvailable(selected?.available ?? true)
+                  setJudgeLatency(selected?.measured_latency_ms ?? '')
+                  setJudgeMessage('')
+                }}
+              >
+                {judgeModels.map((item) => (
+                  <option value={item.id} key={item.id}>
+                    {item.name}{item.overridden ? ' · overridden' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Simulated latency (ms)</span>
+              <input
+                type="number"
+                min="0"
+                max="120000"
+                step="100"
+                value={judgeLatency}
+                onChange={(event) => setJudgeLatency(event.target.value)}
+                placeholder="Unknown"
+              />
+            </label>
+            <label className="judge-availability">
+              <input
+                type="checkbox"
+                checked={judgeAvailable}
+                onChange={(event) => setJudgeAvailable(event.target.checked)}
+              />
+              <span>Model available</span>
+            </label>
+            <div className="judge-actions">
+              <button type="button" onClick={saveJudgeOverride} disabled={judgeBusy || !judgeModelId}>
+                Save override
+              </button>
+              <button
+                className="judge-reset"
+                type="button"
+                onClick={resetJudgeOverride}
+                disabled={judgeBusy || !judgeModels.find((item) => item.id === judgeModelId)?.overridden}
+              >
+                Reset to catalogue
+              </button>
+            </div>
+          </div>
+          {judgeError && <p className="judge-status judge-error">{judgeError}</p>}
+          {judgeMessage && <p className="judge-status">{judgeMessage}</p>}
+        </section>
+      )}
 
       <section className={`conversation ${messages.length ? 'has-messages' : ''}`}>
         {messages.length === 0 ? (
@@ -195,7 +354,15 @@ function App() {
                 <div className="avatar">{message.role === 'user' ? 'Y' : 'M'}</div>
                 <div className="message-body">
                   <div className="message-author">{message.role === 'user' ? 'You' : 'ModelRouter'}</div>
-                  {message.content && <div className={`message-content ${message.failed ? 'message-error' : ''}`}>{message.content}</div>}
+                  {message.content && (
+                    <div className={`message-content ${message.failed ? 'message-error' : ''} ${message.role === 'assistant' ? 'markdown-content' : ''}`}>
+                      {message.role === 'assistant' ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      ) : message.content}
+                    </div>
+                  )}
                   {message.files?.length > 0 && (
                     <div className="message-files">
                       {message.files.map((name) => <span className="file-pill" key={name}>▧ {name}</span>)}
@@ -315,8 +482,15 @@ function Explanation({ data, attempts }) {
       {analysis && (
         <div className="analysis-summary">
           <span>{analysis.complexity} complexity</span>
+          <span>{analysis.complexity_confidence} confidence</span>
           <span>~{analysis.estimated_input_tokens.toLocaleString()} input tokens</span>
           <span>task: {analysis.task}</span>
+          {analysis.automatic_min_capability != null && (
+            <span>complexity floor: {analysis.automatic_min_capability} capability</span>
+          )}
+          {analysis.complexity_signals?.length > 0 && (
+            <p>Signals: {analysis.complexity_signals.join(', ')}</p>
+          )}
           <p>{analysis.estimation_note}</p>
         </div>
       )}
@@ -344,9 +518,9 @@ function Explanation({ data, attempts }) {
         <div className="constraint-tags">
           <span>{constraints.mode || 'fast'} preference</span>
           <span>{constraints.max_latency_ms?.toLocaleString()} ms budget</span>
-            <span>${constraints.max_cost_usd?.toFixed(4)} max cost</span>
-            <span>{constraints.required_context_tokens?.toLocaleString()} context tokens</span>
-            {constraints.min_capability != null && <span>capability ≥ {constraints.min_capability}</span>}
+          <span>${constraints.max_cost_usd?.toFixed(4)} max cost</span>
+          <span>{constraints.required_context_tokens?.toLocaleString()} context tokens</span>
+          {constraints.min_capability != null && <span>capability ≥ {constraints.min_capability}</span>}
           <span>{constraints.free_only ? 'free only' : 'paid allowed'}</span>
         </div>
       )}
