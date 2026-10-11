@@ -30,6 +30,12 @@ catalogue latency is not presumed fast; the live deadline remains a hard limit.
 Supported attachments are text, PDF, and image files. PDFs and images are only
 sent to models whose catalogue advertises the required input modality.
 
+Ranking uses a weighted score normalized across the eligible models for each
+request. Fast mode weights latency 75%, estimated cost 15%, and task capability
+10%. Thinking mode weights latency 55%, reasoning support 25%, task capability
+15%, and estimated cost 5%. Missing metric values receive no utility for that
+metric. Temperature is 0.7 in fast mode and 0.3 in thinking mode.
+
 Routing decisions, rejection reasons, model attempts, and cost/latency
 metadata are appended to `data/routing_logs.jsonl`. User prompt and response
 contents are deliberately not written to the routing log.

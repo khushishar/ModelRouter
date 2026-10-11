@@ -128,7 +128,7 @@ class ConstraintTests(unittest.TestCase):
 
 
 class RankerTests(unittest.TestCase):
-    def test_fast_prefers_known_low_latency_and_thinking_prefers_reasoning(self):
+    def test_speed_is_primary_in_fast_and_thinking_modes(self):
         fast = model("test/fast", latency=100, reasoning=False)
         thinking = model("test/thinking", latency=300, reasoning=True)
         self.assertEqual(
@@ -137,6 +137,37 @@ class RankerTests(unittest.TestCase):
         )
         self.assertEqual(
             rank_models([fast, thinking], "thinking")[0]["id"],
+            "test/fast",
+        )
+
+    def test_speed_has_more_weight_in_fast_mode_than_model_quality(self):
+        fast = model("test/fast", latency=100)
+        fast["benchmarks"] = {
+            "artificial_analysis": {"intelligence_index": 20}
+        }
+        capable = model("test/capable", latency=300)
+        capable["benchmarks"] = {
+            "artificial_analysis": {"intelligence_index": 100}
+        }
+
+        self.assertEqual(
+            rank_models([capable, fast], "fast")[0]["id"],
+            "test/fast",
+        )
+
+    def test_thinking_uses_reasoning_and_task_capability_with_speed(self):
+        fast = model("test/fast", latency=100)
+        fast["benchmarks"] = {
+            "artificial_analysis": {"coding_index": 20}
+        }
+        thinking = model("test/thinking", latency=150, reasoning=True)
+        thinking["benchmarks"] = {
+            "artificial_analysis": {"coding_index": 100}
+        }
+        slow = model("test/slow", latency=300)
+
+        self.assertEqual(
+            rank_models([fast, slow, thinking], "thinking", "coding")[0]["id"],
             "test/thinking",
         )
 
@@ -262,6 +293,29 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["answer"], "Hello.")
         self.assertEqual(response.json()["selected_model"], "test/free")
         self.assertIn("analysis", response.json())
+
+    async def test_chat_uses_temperature_for_selected_mode(self):
+        for mode, temperature in (("fast", 0.7), ("thinking", 0.3)):
+            with self.subTest(mode=mode):
+                generate = AsyncMock(return_value={
+                    "model": "test/free",
+                    "content": "Hello.",
+                    "latency_ms": 24,
+                    "total_latency_ms": 24,
+                    "usage": {},
+                    "attempts": [],
+                })
+                with patch.object(api, "generate_response", generate):
+                    response = await self.client.post(
+                        "/api/chat",
+                        json={"prompt": "Say hello", "mode": mode},
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    generate.await_args.kwargs["temperature"],
+                    temperature,
+                )
 
     async def test_only_paid_candidates_require_consent(self):
         api.app.state.registry.models = [model("test/paid", price="0.000001")]
