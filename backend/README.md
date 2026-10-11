@@ -46,6 +46,12 @@ qualify. Image generation requires enabling paid models when the image-output
 price is non-zero. Generated images are returned in the chat response and
 displayed in the conversation.
 
+Ranking uses a weighted score normalized across the eligible models for each
+request. Fast mode weights latency 75%, estimated cost 15%, and task capability
+10%. Thinking mode weights latency 55%, reasoning support 25%, task capability
+15%, and estimated cost 5%. Missing metric values receive no utility for that
+metric. Temperature is 0.7 in fast mode and 0.3 in thinking mode.
+
 Routing decisions, rejection reasons, model attempts, and cost/latency
 metadata are appended to `data/routing_logs.jsonl`. User prompt and response
 contents are deliberately not written to the routing log.
