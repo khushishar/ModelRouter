@@ -5,7 +5,7 @@ from typing import Any
 
 TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
 SIMPLE_PROMPT_PATTERN = re.compile(
-    r"^\s*(?:hi|hello|hey|thanks|thank you|good morning|good evening)[!. ]*\s*$",
+    r"^\s*(?:hi|hello|hey|thanks|thank you|good morning|good evening)[!. ]*\s*$"),
 IMAGE_GENERATION_PATTERN = re.compile(
     r"\b(?:generate|create|make|draw|paint|render|illustrate|design)\b"
     r".{0,80}\b(?:image|picture|illustration|artwork|photo|logo|poster|icon|wallpaper)\b"
