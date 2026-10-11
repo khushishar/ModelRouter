@@ -4,6 +4,13 @@ from typing import Any
 
 
 TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+IMAGE_GENERATION_PATTERN = re.compile(
+    r"\b(?:generate|create|make|draw|paint|render|illustrate|design)\b"
+    r".{0,80}\b(?:image|picture|illustration|artwork|photo|logo|poster|icon|wallpaper)\b"
+    r"|\b(?:draw|paint|illustrate)\s+(?:me\s+)?(?:a|an)\s+\w+"
+    r"|^\s*(?:an?\s+)?(?:image|picture|illustration|artwork|photo)\s+of\b",
+    re.IGNORECASE,
+)
 COMPLEXITY_CUES = {
     "reasoning": (
         "analyze", "analyse", "compare", "evaluate", "prove", "debug",
@@ -51,7 +58,11 @@ def analyze_prompt(
         complexity = "low"
 
     task = "general"
-    if any(cue in normalized for cue in ("code", "program", "debug", "function")):
+    output_modality = "text"
+    if IMAGE_GENERATION_PATTERN.search(normalized):
+        task = "image_generation"
+        output_modality = "image"
+    elif any(cue in normalized for cue in ("code", "program", "debug", "function")):
         task = "coding"
     elif any(cue in normalized for cue in ("summarize", "summarise", "summary")):
         task = "summarization"
@@ -68,6 +79,7 @@ def analyze_prompt(
         "file_tokens": file_token_estimate,
         "complexity": complexity,
         "task": task,
+        "output_modality": output_modality,
         "reasoning_signals": reasoning_signals,
         "long_context_signals": long_context_signals,
         "file_count": file_count,

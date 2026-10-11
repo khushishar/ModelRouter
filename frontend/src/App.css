@@ -92,6 +92,27 @@
   color: #b1ca9a;
 }
 
+.new-chat-button {
+  border: 1px solid #3a3c44;
+  border-radius: 7px;
+  padding: 6px 9px;
+  color: #c7d7b3;
+  background: #1b1d20;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.new-chat-button:hover:not(:disabled) {
+  border-color: #65734f;
+  background: #252a20;
+}
+
+.new-chat-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .conversation {
   flex: 1 1 auto;
   width: min(100%, 790px);
@@ -248,6 +269,22 @@
 
 .message-error {
   color: #f0a49b;
+}
+
+.generated-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.generated-images img {
+  display: block;
+  max-width: 100%;
+  max-height: 520px;
+  border: 1px solid #363840;
+  border-radius: 9px;
+  object-fit: contain;
 }
 
 .message-files,
@@ -855,6 +892,11 @@
   }
 
   .backend-status {
+    font-size: 9px;
+  }
+
+  .new-chat-button {
+    padding: 6px 7px;
     font-size: 9px;
   }
 

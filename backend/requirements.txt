@@ -3,3 +3,4 @@ uvicorn[standard]
 httpx
 python-dotenv
 pydantic
+pypdf>=5.0

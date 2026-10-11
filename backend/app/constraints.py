@@ -79,6 +79,7 @@ def run_pipeline(
     max_cost_usd: float = 0.02,
     estimated_input_tokens: int = 2000,
     estimated_output_tokens: int = 500,
+    estimated_output_images: int = 0,
     required_context: int = 4096,
     max_latency_ms: float | None = 5000,
 ) -> dict[str, Any]:
@@ -143,7 +144,23 @@ def run_pipeline(
                 prompt_price * estimated_input_tokens
                 + completion_price * estimated_output_tokens
             )
-            if free_only and (prompt_price != 0 or completion_price != 0):
+            image_price = None
+            if estimated_output_images:
+                image_price = get_price(
+                    (model.get("pricing") or {}).get("image_output")
+                )
+                if image_price is None:
+                    reasons.append({
+                        "constraint": "cost",
+                        "reason": "Image output price is unknown",
+                    })
+                else:
+                    estimated_cost += image_price * estimated_output_images
+            if free_only and (
+                prompt_price != 0
+                or completion_price != 0
+                or (estimated_output_images and image_price != 0)
+            ):
                 reasons.append({
                     "constraint": "cost",
                     "reason": "Model is not verified as free",

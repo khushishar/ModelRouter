@@ -9,6 +9,9 @@ const suggestions = [
   { icon: '↗', title: 'Summarize a document', prompt: 'Summarize the key points and action items in this document.' },
 ]
 
+function createConversationId() {
+  return globalThis.crypto.randomUUID()
+}
 const demoPlans = [
   {
     id: 'usage',
@@ -19,14 +22,14 @@ const demoPlans = [
   {
     id: 'pro',
     name: 'Pro',
-    price: '$12 / month',
+    price: '₹2000 / month',
     description: 'Higher usage limits for individual workflows.',
     popular: true,
   },
   {
     id: 'team',
     name: 'Team',
-    price: '$29 / user / month',
+    price: '₹5000 / user / month',
     description: 'Shared access and controls for a team.',
   },
 ]
@@ -66,6 +69,7 @@ function fileToAttachment(file) {
 }
 
 function App() {
+  const [conversationId, setConversationId] = useState(createConversationId)
   const [prompt, setPrompt] = useState('')
   const [mode, setMode] = useState('fast')
   const [files, setFiles] = useState([])
@@ -121,6 +125,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          conversation_id: conversationId,
           prompt: trimmed,
           mode,
           attachments,
@@ -157,6 +162,7 @@ function App() {
       setMessages((current) => [...current, {
         role: 'assistant',
         content: result.answer,
+        images: result.images || [],
         explanation: result,
       }])
     } catch (requestError) {
@@ -196,6 +202,21 @@ function App() {
               ? `${health.model_count.toLocaleString()} models`
               : health?.status === 'offline' ? 'Backend offline' : 'Connecting'}
           </span>
+          <button
+            className="new-chat-button"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setConversationId(createConversationId())
+              setMessages([])
+              setPrompt('')
+              setFiles([])
+              setError('')
+              setAllowPaid(false)
+            }}
+          >
+            + New chat
+          </button>
         </div>
       </header>
 
@@ -231,6 +252,18 @@ function App() {
                 <div className="message-body">
                   <div className="message-author">{message.role === 'user' ? 'You' : 'ModelRouter'}</div>
                   {message.content && <div className={`message-content ${message.failed ? 'message-error' : ''}`}>{message.content}</div>}
+                  {message.images?.length > 0 && (
+                    <div className="generated-images">
+                      {message.images.map((image, imageIndex) => (
+                        <img
+                          key={`${index}-${imageIndex}`}
+                          src={image}
+                          alt={`Generated image ${imageIndex + 1}`}
+                          loading="lazy"
+                        />
+                      ))}
+                    </div>
+                  )}
                   {message.files?.length > 0 && (
                     <div className="message-files">
                       {message.files.map((name) => <span className="file-pill" key={name}>▧ {name}</span>)}
@@ -462,6 +495,8 @@ function Explanation({ data }) {
       {constraints && (
         <div className="constraint-tags">
           <span>{constraints.mode || 'fast'} preference</span>
+          <span>input: {(constraints.input_modalities || ['text']).join(' + ')}</span>
+          <span>output: {constraints.output_modality || 'text'}</span>
           <span>{constraints.max_latency_ms?.toLocaleString()} ms budget</span>
             <span>${constraints.max_cost_usd?.toFixed(4)} max cost</span>
             <span>{constraints.required_context_tokens?.toLocaleString()} context tokens</span>
