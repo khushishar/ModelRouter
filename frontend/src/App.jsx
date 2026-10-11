@@ -79,7 +79,6 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [health, setHealth] = useState(null)
-  const [allowPaid, setAllowPaid] = useState(false)
   const [judgeOpen, setJudgeOpen] = useState(false)
   const [judgeModels, setJudgeModels] = useState([])
   const [judgeModelId, setJudgeModelId] = useState('')
@@ -88,9 +87,6 @@ function App() {
   const [judgeBusy, setJudgeBusy] = useState(false)
   const [judgeMessage, setJudgeMessage] = useState('')
   const [judgeError, setJudgeError] = useState('')
-  const [planModal, setPlanModal] = useState(null)
-  const [selectedPlan, setSelectedPlan] = useState('')
-  const [planConfirmed, setPlanConfirmed] = useState(false)
   const [planModal, setPlanModal] = useState(null)
   const [selectedPlan, setSelectedPlan] = useState('')
   const [planConfirmed, setPlanConfirmed] = useState(false)
@@ -296,6 +292,8 @@ function App() {
             }}
           >
             Judge controls
+          </button>
+          <button
             className="new-chat-button"
             type="button"
             disabled={busy}
@@ -305,7 +303,6 @@ function App() {
               setPrompt('')
               setFiles([])
               setError('')
-              setAllowPaid(false)
             }}
           >
             + New chat
@@ -419,7 +416,8 @@ function App() {
                           {message.content}
                         </ReactMarkdown>
                       ) : message.content}
-                  {message.content && <div className={`message-content ${message.failed ? 'message-error' : ''}`}>{message.content}</div>}
+                    </div>
+                  )}
                   {message.images?.length > 0 && (
                     <div className="generated-images">
                       {message.images.map((image, imageIndex) => (
