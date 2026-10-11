@@ -79,7 +79,6 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [health, setHealth] = useState(null)
-<<<<<<< HEAD
   const [allowPaid, setAllowPaid] = useState(false)
   const [judgeOpen, setJudgeOpen] = useState(false)
   const [judgeModels, setJudgeModels] = useState([])
@@ -89,11 +88,12 @@ function App() {
   const [judgeBusy, setJudgeBusy] = useState(false)
   const [judgeMessage, setJudgeMessage] = useState('')
   const [judgeError, setJudgeError] = useState('')
-=======
   const [planModal, setPlanModal] = useState(null)
   const [selectedPlan, setSelectedPlan] = useState('')
   const [planConfirmed, setPlanConfirmed] = useState(false)
->>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
+  const [planModal, setPlanModal] = useState(null)
+  const [selectedPlan, setSelectedPlan] = useState('')
+  const [planConfirmed, setPlanConfirmed] = useState(false)
   const fileInput = useRef(null)
   const messageEnd = useRef(null)
   const promptInput = useRef(null)
@@ -286,7 +286,6 @@ function App() {
               : health?.status === 'offline' ? 'Backend offline' : 'Connecting'}
           </span>
           <button
-<<<<<<< HEAD
             className="new-chat-button judge-toggle"
             type="button"
             aria-expanded={judgeOpen}
@@ -297,7 +296,6 @@ function App() {
             }}
           >
             Judge controls
-=======
             className="new-chat-button"
             type="button"
             disabled={busy}
@@ -311,7 +309,6 @@ function App() {
             }}
           >
             + New chat
->>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
           </button>
         </div>
       </header>
@@ -415,7 +412,6 @@ function App() {
                 <div className="avatar">{message.role === 'user' ? 'Y' : 'M'}</div>
                 <div className="message-body">
                   <div className="message-author">{message.role === 'user' ? 'You' : 'ModelRouter'}</div>
-<<<<<<< HEAD
                   {message.content && (
                     <div className={`message-content ${message.failed ? 'message-error' : ''} ${message.role === 'assistant' ? 'markdown-content' : ''}`}>
                       {message.role === 'assistant' ? (
@@ -423,7 +419,6 @@ function App() {
                           {message.content}
                         </ReactMarkdown>
                       ) : message.content}
-=======
                   {message.content && <div className={`message-content ${message.failed ? 'message-error' : ''}`}>{message.content}</div>}
                   {message.images?.length > 0 && (
                     <div className="generated-images">
@@ -435,7 +430,6 @@ function App() {
                           loading="lazy"
                         />
                       ))}
->>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
                     </div>
                   )}
                   {message.files?.length > 0 && (

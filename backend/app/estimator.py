@@ -4,16 +4,13 @@ from typing import Any
 
 
 TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
-<<<<<<< HEAD
 SIMPLE_PROMPT_PATTERN = re.compile(
     r"^\s*(?:hi|hello|hey|thanks|thank you|good morning|good evening)[!. ]*\s*$",
-=======
 IMAGE_GENERATION_PATTERN = re.compile(
     r"\b(?:generate|create|make|draw|paint|render|illustrate|design)\b"
     r".{0,80}\b(?:image|picture|illustration|artwork|photo|logo|poster|icon|wallpaper)\b"
     r"|\b(?:draw|paint|illustrate)\s+(?:me\s+)?(?:a|an)\s+\w+"
     r"|^\s*(?:an?\s+)?(?:image|picture|illustration|artwork|photo)\s+of\b",
->>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
     re.IGNORECASE,
 )
 COMPLEXITY_CUES = {

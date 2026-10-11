@@ -540,7 +540,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["selected_model"], "test/free")
         self.assertIn("analysis", response.json())
 
-<<<<<<< HEAD
     async def test_judge_endpoints_list_update_and_reset_models(self):
         registry = type("Registry", (), {})()
         registry.models = [model("test/free", latency=100)]
@@ -610,7 +609,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             "total_latency_ms": 24,
             "usage": {"prompt_tokens": 6, "completion_tokens": 10},
             "attempts": [{"model": "test/strong", "success": True}],
-=======
     async def test_image_request_filters_for_image_output_and_returns_images(self):
         image_model = model("test/image", price="0")
         image_model["architecture"]["output_modalities"] = ["text", "image"]
@@ -625,12 +623,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             "total_latency_ms": 24,
             "usage": {"prompt_tokens": 2, "completion_tokens": 0},
             "attempts": [{"model": "test/image", "success": True}],
->>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
         })
         with patch.object(api, "generate_response", generate):
             response = await self.client.post(
                 "/api/chat",
-<<<<<<< HEAD
                 json={"prompt": "What is a quasar?"},
             )
 
@@ -644,7 +640,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             reason["constraint"] == "capability"
             for reason in rejected_weak["reasons"]
         ))
-=======
                 json={"prompt": "Make an image of a cat", "allow_paid": True},
             )
 
@@ -835,7 +830,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     generate.await_args.kwargs["temperature"],
                     temperature,
                 )
->>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
 
     async def test_only_paid_candidates_require_consent(self):
         api.app.state.registry.models = [model("test/paid", price="0.000001")]

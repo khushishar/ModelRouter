@@ -113,7 +113,6 @@ def _write_log(event: dict[str, Any]) -> None:
         log_file.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
 
 
-<<<<<<< HEAD
 def _require_loopback_judge(request: Request) -> None:
     client_host = request.client.host if request.client else None
     if client_host not in {"127.0.0.1", "::1", "testclient"}:
@@ -198,7 +197,6 @@ async def reset_judge_override(
         "timestamp": time.time(),
     })
     return {"status": "reset"}
-=======
 def _message_size(messages: list[dict[str, Any]]) -> int:
     return len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
 
@@ -315,7 +313,6 @@ def _message_modalities(messages: list[dict[str, Any]]) -> list[str]:
                 elif part.get("type") == "image_url":
                     modalities.append("image")
     return list(dict.fromkeys(modalities))
->>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
 
 
 def _decode_attachment(attachment: Attachment) -> tuple[str, bytes | None]:
