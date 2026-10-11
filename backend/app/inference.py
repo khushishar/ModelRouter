@@ -14,6 +14,29 @@ class InferenceError(Exception):
         self.attempts = attempts
 
 
+def _provider_error(response: httpx.Response) -> str:
+    """Extract a concise provider error without retaining the full body."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        details = []
+        code = error.get("code")
+        message = error.get("message")
+        if code is not None:
+            details.append(f"code {code}")
+        if isinstance(message, str) and message.strip():
+            details.append(message.strip()[:400])
+        if details:
+            return f"HTTP {response.status_code}: {' — '.join(details)}"
+    if isinstance(error, str) and error.strip():
+        return f"HTTP {response.status_code}: {error.strip()[:400]}"
+    return f"HTTP {response.status_code}: provider returned an error response"
+
+
 async def generate_response(
     messages: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
@@ -21,6 +44,7 @@ async def generate_response(
     max_tokens: int = 1000,
     temperature: float = 0.7,
     latency_budget_ms: float = 30_000,
+    output_modality: str = "text",
 ) -> dict[str, Any]:
     """Try ranked, already-filtered candidates under one shared deadline."""
     if not OPENROUTER_API_KEY:
@@ -34,8 +58,9 @@ async def generate_response(
     started_at = time.monotonic()
     deadline = started_at + latency_budget_ms / 1000
     attempts: list[dict[str, Any]] = []
+    deadline_exhausted = False
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": "Bearer " + OPENROUTER_API_KEY,
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:5173",
         "X-Title": "ModelRouter",
@@ -45,6 +70,7 @@ async def generate_response(
         for model in candidates:
             remaining_s = deadline - time.monotonic()
             if remaining_s <= 0:
+                deadline_exhausted = True
                 break
 
             model_id = model["id"]
@@ -56,6 +82,8 @@ async def generate_response(
                 "temperature": temperature,
                 "stream": False,
             }
+            if output_modality == "image":
+                payload["modalities"] = ["image", "text"]
 
             try:
                 response = await client.post(
@@ -68,11 +96,12 @@ async def generate_response(
                     (time.monotonic() - attempt_started) * 1000, 2
                 )
                 if response.is_error:
+                    provider_error = _provider_error(response)
                     attempts.append({
                         "model": model_id,
                         "status": response.status_code,
                         "latency_ms": elapsed_ms,
-                        "error": "Provider returned an error response",
+                        "error": provider_error,
                     })
                     continue
 
@@ -86,18 +115,51 @@ async def generate_response(
                     })
                     continue
 
-                content = choices[0].get("message", {}).get("content")
+                message = choices[0].get("message") or {}
+                content = message.get("content")
+                images = []
                 if isinstance(content, list):
-                    content = "\n".join(
-                        part.get("text", "")
-                        for part in content
-                        if isinstance(part, dict)
+                    text_parts = []
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+                        if isinstance(part.get("text"), str):
+                            text_parts.append(part["text"])
+                        image = part.get("image_url")
+                        image_url = (
+                            image.get("url") if isinstance(image, dict)
+                            else image
+                        )
+                        if isinstance(image_url, str):
+                            images.append(image_url)
+                    content = "\n".join(text_parts)
+                if not isinstance(content, str):
+                    content = ""
+                for image in message.get("images") or []:
+                    image_url = (
+                        image.get("image_url") if isinstance(image, dict)
+                        else None
                     )
-                if not isinstance(content, str) or not content.strip():
+                    image_url = (
+                        image_url.get("url")
+                        if isinstance(image_url, dict)
+                        else image_url
+                    )
+                    if isinstance(image_url, str):
+                        images.append(image_url)
+                images = list(dict.fromkeys(images))
+                if output_modality == "image" and not images:
                     attempts.append({
                         "model": model_id,
                         "latency_ms": elapsed_ms,
-                        "error": "Provider returned no text content",
+                        "error": "Provider returned no generated image",
+                    })
+                    continue
+                if not content.strip() and not images:
+                    attempts.append({
+                        "model": model_id,
+                        "latency_ms": elapsed_ms,
+                        "error": "Provider returned no text or image content",
                     })
                     continue
                 model["measured_latency_ms"] = elapsed_ms
@@ -110,6 +172,7 @@ async def generate_response(
                 return {
                     "model": model_id,
                     "content": content,
+                    "images": images,
                     "latency_ms": elapsed_ms,
                     "usage": data.get("usage") or {},
                     "attempts": attempts,
@@ -121,6 +184,7 @@ async def generate_response(
                 elapsed_ms = round(
                     (time.monotonic() - attempt_started) * 1000, 2
                 )
+                deadline_exhausted = time.monotonic() >= deadline
                 attempts.append({
                     "model": model_id,
                     "latency_ms": elapsed_ms,
@@ -143,7 +207,25 @@ async def generate_response(
                     "error": f"Invalid provider response: {type(exc).__name__}",
                 })
 
-    raise InferenceError(
-        "No eligible model returned a response within the latency budget.",
-        attempts,
-    )
+    if deadline_exhausted or time.monotonic() >= deadline:
+        message = (
+            "The shared latency budget expired before an eligible model "
+            "returned a response."
+        )
+    elif attempts and all("status" in attempt for attempt in attempts):
+        errors = "; ".join(
+            f"{attempt['model']}: {attempt['error']}"
+            for attempt in attempts
+        )
+        message = f"All attempted models were rejected by the provider: {errors}"
+    else:
+        errors = "; ".join(
+            f"{attempt['model']}: {attempt['error']}"
+            for attempt in attempts
+        )
+        message = (
+            "All attempted models failed before returning a response."
+            + (f" Failures: {errors}" if errors else "")
+        )
+
+    raise InferenceError(message, attempts)
