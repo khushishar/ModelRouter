@@ -271,6 +271,232 @@
   color: #f0a49b;
 }
 
+.markdown-content {
+  white-space: normal;
+}
+
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content p,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content blockquote,
+.markdown-content pre,
+.markdown-content table {
+  margin: 0 0 13px;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 24px;
+}
+
+.markdown-content li + li {
+  margin-top: 4px;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin: 20px 0 9px;
+  color: #f0f0f2;
+  line-height: 1.35;
+}
+
+.markdown-content h1 { font-size: 1.45em; }
+.markdown-content h2 { font-size: 1.3em; }
+.markdown-content h3,
+.markdown-content h4 { font-size: 1.12em; }
+
+.markdown-content strong {
+  color: #f3f3f5;
+  font-weight: 700;
+}
+
+.markdown-content a {
+  color: #c6e89e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-content blockquote {
+  border-left: 3px solid #65734e;
+  padding-left: 12px;
+  color: #b5b7bf;
+}
+
+.markdown-content :not(pre) > code {
+  border: 1px solid #33353d;
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: #d3e8b7;
+  background: #1b1c22;
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+.markdown-content pre {
+  overflow-x: auto;
+  border: 1px solid #30323a;
+  border-radius: 8px;
+  padding: 12px;
+  background: #17181e;
+}
+
+.markdown-content pre code {
+  color: #d7d8dd;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.markdown-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #393b44;
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-content th {
+  color: #e7e8eb;
+  background: #23252c;
+}
+
+.judge-toggle {
+  border: 1px solid #3c4232;
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: #cfe4b3;
+  background: #20231c;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.judge-panel {
+  margin: 13px 0 0;
+  border: 1px solid #363840;
+  border-radius: 11px;
+  padding: 15px;
+  background: #191a20;
+}
+
+.judge-panel-heading,
+.judge-controls,
+.judge-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.judge-panel-heading {
+  justify-content: space-between;
+  margin-bottom: 13px;
+}
+
+.judge-panel-heading h2 {
+  margin: 0;
+  color: #e3e4e8;
+  font-size: 13px;
+}
+
+.judge-panel-heading p,
+.judge-panel-heading > span,
+.judge-status {
+  margin: 5px 0 0;
+  color: #858893;
+  font-size: 10px;
+}
+
+.judge-panel-heading > span {
+  color: #aab894;
+  white-space: nowrap;
+}
+
+.judge-controls > label:not(.judge-availability) {
+  flex: 1;
+  min-width: 0;
+}
+
+.judge-controls > label > span:first-child {
+  display: block;
+  margin-bottom: 6px;
+  color: #9da0a9;
+  font-size: 10px;
+}
+
+.judge-controls select,
+.judge-controls input[type="number"] {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #373941;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #e3e4e8;
+  background: #15161b;
+  font: inherit;
+  font-size: 11px;
+}
+
+.judge-availability {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #c6c7cd;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.judge-actions {
+  align-self: flex-end;
+}
+
+.judge-actions button {
+  min-height: 34px;
+  border: 1px solid #67764f;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: #171a13;
+  background: #c6e89e;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.judge-actions .judge-reset {
+  border-color: #44464e;
+  color: #c8c9cf;
+  background: #25262d;
+}
+
+.judge-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.judge-status {
+  color: #b7ce9e;
+}
+
+.judge-status.judge-error {
+  color: #f0a49b;
 .generated-images {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
@@ -884,6 +1110,26 @@
 
   .topbar-right {
     gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .routing-label {
+    display: none;
+  }
+
+  .topbar-right .judge-toggle {
+    padding: 6px;
+    font-size: 9px;
+  }
+
+  .judge-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .judge-actions {
+    align-self: stretch;
   }
 
   .routing-label {

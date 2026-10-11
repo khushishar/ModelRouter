@@ -1,11 +1,15 @@
 import json
 import logging
 import math
+import os
+import tempfile
+from threading import RLock
 from typing import Any
 
 from app.config import CATALOGUE_PATH, MODEL_OVERRIDES_PATH
 
 logger = logging.getLogger(__name__)
+_OVERRIDE_LOCK = RLock()
 
 
 class ModelRegistry:
@@ -78,28 +82,10 @@ class ModelRegistry:
         }
 
     def list_models(self) -> list[dict[str, Any]]:
-        try:
-            with MODEL_OVERRIDES_PATH.open("r", encoding="utf-8") as file:
-                overrides = json.load(file)
-        except FileNotFoundError:
-            overrides = {}
-        except (OSError, json.JSONDecodeError):
-            logger.exception(
-                "Unable to read model overrides: %s", MODEL_OVERRIDES_PATH
-            )
-            raise
-
-        if not isinstance(overrides, dict):
-            raise ValueError("Model overrides must be a JSON object")
+        overrides = self.get_overrides()
 
         models = [dict(model) for model in self.models]
         indexed = {model["id"]: model for model in models}
-        unknown_ids = set(overrides) - set(indexed)
-        if unknown_ids:
-            raise ValueError(
-                "Model overrides reference unknown model IDs: "
-                + ", ".join(sorted(unknown_ids))
-            )
 
         for model_id, override in overrides.items():
             if not isinstance(override, dict):
@@ -125,6 +111,101 @@ class ModelRegistry:
                     )
                 model["measured_latency_ms"] = latency
         return models
+
+    def get_overrides(self) -> dict[str, Any]:
+        overrides = self._load_overrides()
+        known_ids = {model["id"] for model in self.models}
+        unknown_ids = set(overrides) - known_ids
+        if unknown_ids:
+            raise ValueError(
+                "Model overrides reference unknown model IDs: "
+                + ", ".join(sorted(unknown_ids))
+            )
+        return overrides
+
+    @staticmethod
+    def _load_overrides() -> dict[str, Any]:
+        try:
+            with MODEL_OVERRIDES_PATH.open("r", encoding="utf-8") as file:
+                overrides = json.load(file)
+        except FileNotFoundError:
+            overrides = {}
+        except (OSError, json.JSONDecodeError):
+            logger.exception(
+                "Unable to read model overrides: %s", MODEL_OVERRIDES_PATH
+            )
+            raise
+
+        if not isinstance(overrides, dict):
+            raise ValueError("Model overrides must be a JSON object")
+        return overrides
+
+    def set_override(
+        self,
+        model_id: str,
+        *,
+        available: bool,
+        measured_latency_ms: float | None,
+    ) -> None:
+        if model_id not in {model["id"] for model in self.models}:
+            raise KeyError(model_id)
+        if not isinstance(available, bool):
+            raise ValueError("Availability override must be boolean")
+        if measured_latency_ms is not None and (
+            isinstance(measured_latency_ms, bool)
+            or not isinstance(measured_latency_ms, (int, float))
+            or not math.isfinite(measured_latency_ms)
+            or measured_latency_ms < 0
+        ):
+            raise ValueError(
+                "Latency override must be a non-negative number or null"
+            )
+
+        with _OVERRIDE_LOCK:
+            overrides = self._load_overrides()
+            overrides[model_id] = {
+                "available": available,
+                "measured_latency_ms": measured_latency_ms,
+            }
+            self._write_overrides(overrides)
+
+    def clear_override(self, model_id: str) -> None:
+        if model_id not in {model["id"] for model in self.models}:
+            raise KeyError(model_id)
+
+        with _OVERRIDE_LOCK:
+            overrides = self._load_overrides()
+            overrides.pop(model_id, None)
+            self._write_overrides(overrides)
+
+    @staticmethod
+    def _write_overrides(overrides: dict[str, Any]) -> None:
+        temporary_path = None
+        try:
+            MODEL_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=MODEL_OVERRIDES_PATH.parent,
+                prefix=f".{MODEL_OVERRIDES_PATH.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as file:
+                temporary_path = file.name
+                json.dump(overrides, file, ensure_ascii=False, indent=2)
+                file.write("\n")
+            os.replace(temporary_path, MODEL_OVERRIDES_PATH)
+        except OSError:
+            logger.exception(
+                "Unable to write model overrides: %s", MODEL_OVERRIDES_PATH
+            )
+            raise
+        finally:
+            if temporary_path and os.path.exists(temporary_path):
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
 
     def get_model(self, model_id: str) -> dict[str, Any] | None:
         model = next(
