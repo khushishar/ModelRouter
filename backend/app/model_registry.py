@@ -1,7 +1,11 @@
 import json
+import logging
+import math
 from typing import Any
 
-from app.config import CATALOGUE_PATH
+from app.config import CATALOGUE_PATH, MODEL_OVERRIDES_PATH
+
+logger = logging.getLogger(__name__)
 
 
 class ModelRegistry:
@@ -12,67 +16,106 @@ class ModelRegistry:
         self.load()
 
     def load(self) -> None:
-        if not CATALOGUE_PATH.exists():
-            raise FileNotFoundError(
-                f"Model catalogue not found: {CATALOGUE_PATH}. "
-                "Run `python -m app.catalogue` first."
-            )
+        try:
+            with CATALOGUE_PATH.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except FileNotFoundError:
+            logger.exception("OpenRouter catalogue is missing: %s", CATALOGUE_PATH)
+            raise
+        except (OSError, json.JSONDecodeError):
+            logger.exception("Unable to read OpenRouter catalogue: %s", CATALOGUE_PATH)
+            raise
 
-        with CATALOGUE_PATH.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
-
-        raw_models = payload.get("data", [])
+        raw_models = payload.get("data")
+        if not isinstance(raw_models, list):
+            raise ValueError("OpenRouter catalogue must contain a data array")
 
         self.models = [
             model
             for item in raw_models
+            if isinstance(item, dict)
             if (model := self._normalize(item)) is not None
         ]
-
-        print(f"Loaded {len(self.models)} models from local catalogue.")
+        logger.info("Loaded %d models from local catalogue", len(self.models))
 
     @staticmethod
     def _normalize(item: dict[str, Any]) -> dict[str, Any] | None:
         model_id = item.get("id")
-        if not model_id:
+        if not isinstance(model_id, str) or not model_id.strip():
             return None
 
         architecture = item.get("architecture") or {}
         pricing = item.get("pricing") or {}
-
-        input_modalities = architecture.get("input_modalities") or ["text"]
-        output_modalities = architecture.get("output_modalities") or ["text"]
-
-        def price(value: Any) -> float | None:
-            try:
-                return float(value) if value is not None else None
-            except (ValueError, TypeError):
-                return None
-
         return {
             "id": model_id,
             "name": item.get("name") or model_id,
             "provider": model_id.split("/")[0] if "/" in model_id else "unknown",
             "context_length": item.get("context_length"),
-            "input_modalities": input_modalities,
-            "output_modalities": output_modalities,
+            "architecture": architecture,
+            "input_modalities": architecture.get("input_modalities") or [],
+            "output_modalities": architecture.get("output_modalities") or [],
             "supported_parameters": item.get("supported_parameters") or [],
-            "input_price_per_token": price(pricing.get("prompt")),
-            "output_price_per_token": price(pricing.get("completion")),
-            "is_free": (
-                price(pricing.get("prompt")) == 0
-                and price(pricing.get("completion")) == 0
-            ),
-            # These are application-owned fields, not official OpenRouter scores.
-            "capability": None,
-            "measured_latency_ms": None,
+            "pricing": pricing,
+            "input_price_per_token": pricing.get("prompt"),
+            "output_price_per_token": pricing.get("completion"),
+            "benchmarks": item.get("benchmarks") or {},
+            "modelrouter_metrics": item.get("modelrouter_metrics") or {},
+            "reasoning": item.get("reasoning") or {},
+            "available": item.get("available", True),
         }
 
     def list_models(self) -> list[dict[str, Any]]:
-        return self.models
+        try:
+            with MODEL_OVERRIDES_PATH.open("r", encoding="utf-8") as file:
+                overrides = json.load(file)
+        except FileNotFoundError:
+            overrides = {}
+        except (OSError, json.JSONDecodeError):
+            logger.exception(
+                "Unable to read model overrides: %s", MODEL_OVERRIDES_PATH
+            )
+            raise
+
+        if not isinstance(overrides, dict):
+            raise ValueError("Model overrides must be a JSON object")
+
+        models = [dict(model) for model in self.models]
+        indexed = {model["id"]: model for model in models}
+        unknown_ids = set(overrides) - set(indexed)
+        if unknown_ids:
+            raise ValueError(
+                "Model overrides reference unknown model IDs: "
+                + ", ".join(sorted(unknown_ids))
+            )
+
+        for model_id, override in overrides.items():
+            if not isinstance(override, dict):
+                raise ValueError(f"Override for {model_id} must be an object")
+            model = indexed[model_id]
+            if "available" in override:
+                if not isinstance(override["available"], bool):
+                    raise ValueError(
+                        f"Availability override for {model_id} must be boolean"
+                    )
+                model["available"] = override["available"]
+            if "measured_latency_ms" in override:
+                latency = override["measured_latency_ms"]
+                if latency is not None and (
+                    not isinstance(latency, (int, float))
+                    or isinstance(latency, bool)
+                    or not math.isfinite(latency)
+                    or latency < 0
+                ):
+                    raise ValueError(
+                        f"Latency override for {model_id} must be "
+                        "a non-negative number or null"
+                    )
+                model["measured_latency_ms"] = latency
+        return models
 
     def get_model(self, model_id: str) -> dict[str, Any] | None:
-        return next(
-            (model for model in self.models if model["id"] == model_id),
+        model = next(
+            (item for item in self.models if item["id"] == model_id),
             None,
         )
+        return dict(model) if model else None

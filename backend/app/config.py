@@ -14,3 +14,5 @@ OPENROUTER_BASE_URL = os.getenv(
 
 DATA_DIR = BACKEND_DIR / "data"
 CATALOGUE_PATH = DATA_DIR / "openrouter_models.json"
+MODEL_OVERRIDES_PATH = DATA_DIR / "model_overrides.json"
+ROUTING_LOG_PATH = DATA_DIR / "routing_logs.jsonl"
