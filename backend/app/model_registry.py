@@ -46,6 +46,18 @@ class ModelRegistry:
 
         architecture = item.get("architecture") or {}
         pricing = item.get("pricing") or {}
+        try:
+            prompt_price = float(pricing["prompt"])
+            completion_price = float(pricing["completion"])
+            is_free = (
+                math.isfinite(prompt_price)
+                and math.isfinite(completion_price)
+                and prompt_price == 0
+                and completion_price == 0
+            )
+        except (KeyError, TypeError, ValueError):
+            is_free = False
+
         return {
             "id": model_id,
             "name": item.get("name") or model_id,
@@ -58,6 +70,7 @@ class ModelRegistry:
             "pricing": pricing,
             "input_price_per_token": pricing.get("prompt"),
             "output_price_per_token": pricing.get("completion"),
+            "is_free": is_free,
             "benchmarks": item.get("benchmarks") or {},
             "modelrouter_metrics": item.get("modelrouter_metrics") or {},
             "reasoning": item.get("reasoning") or {},

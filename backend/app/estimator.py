@@ -7,11 +7,12 @@ TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
 COMPLEXITY_CUES = {
     "reasoning": (
         "analyze", "analyse", "compare", "evaluate", "prove", "debug",
-        "design", "step by step", "reason", "trade-off", "tradeoff",
+        "design", "step by step", "reason", "trade-off", "tradeoff","explain", "justify", "assess", "synthesize", "deduce", "infer"
     ),
     "long_context": (
         "entire document", "whole document", "long document", "all of this",
-        "contract", "transcript", "multiple files",
+        "contract", "transcript", "multiple files","entire conversation", "full context", "full conversation", "full transcript",
+        "full document", "full text", "entire text", "entire conversation"
     ),
 }
 
