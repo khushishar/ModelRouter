@@ -47,19 +47,65 @@ class EstimatorTests(unittest.TestCase):
         self.assertEqual(result["complexity"], "medium")
         self.assertEqual(result["task"], "reasoning")
 
-    def test_pdf_attachment_selects_file_capability_without_text_prompt(self):
+    def test_image_generation_is_text_input_and_image_output(self):
+        result = analyze_prompt("Make an image of a cat.")
+        self.assertEqual(result["task"], "image_generation")
+        self.assertEqual(result["output_modality"], "image")
+        self.assertEqual(
+            analyze_prompt("What is in this picture?")["output_modality"],
+            "text",
+        )
+
+    def test_pdf_text_is_extracted_before_building_model_message(self):
         attachment = api.Attachment(
             name="brief.pdf",
             mime_type="application/pdf",
-            data="cGRm",
+            data="dGVzdA==",
         )
-        message, modalities, file_tokens = api._build_user_message(
+        reader = type(
+            "Reader",
+            (),
+            {
+                "is_encrypted": False,
+                "pages": [
+                    type("Page", (), {"extract_text": lambda self: "Extracted PDF text"})()
+                ],
+            },
+        )()
+        with patch.object(api, "PdfReader", return_value=reader):
+            mime_type, extracted = api._decode_attachment(attachment)
+
+        self.assertEqual(mime_type, "text/plain")
+        self.assertEqual(extracted, b"Extracted PDF text")
+        message, modalities, _ = api._build_user_message(
             "",
-            [(attachment, "application/pdf", b"pdf")],
+            [(attachment, mime_type, extracted)],
         )
-        self.assertEqual(modalities, ["pdf"])
-        self.assertEqual(message["content"][0]["type"], "file")
-        self.assertGreaterEqual(file_tokens, 1024)
+        self.assertEqual(modalities, ["text"])
+        self.assertIn("Extracted PDF text", message["content"])
+
+    def test_scanned_pdf_without_extractable_text_returns_clear_error(self):
+        attachment = api.Attachment(
+            name="scan.pdf",
+            mime_type="application/pdf",
+            data="dGVzdA==",
+        )
+        reader = type(
+            "Reader",
+            (),
+            {
+                "is_encrypted": False,
+                "pages": [
+                    type("Page", (), {"extract_text": lambda self: ""})()
+                ],
+            },
+        )()
+        with patch.object(api, "PdfReader", return_value=reader):
+            with self.assertRaises(api.HTTPException) as error:
+                api._decode_attachment(attachment)
+
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertIn("OCR", error.exception.detail)
 
     def test_ambiguous_short_prompt_defaults_to_medium_safety_tier(self):
         result = analyze_prompt("What is a quasar?")
@@ -149,9 +195,34 @@ class ConstraintTests(unittest.TestCase):
             for reason in pipeline["rejected"][0]["reasons"]
         ))
 
+    def test_image_generation_requires_supported_and_priced_image_output(self):
+        text_only = model("test/text-only")
+        image_capable = model("test/image", price="0")
+        image_capable["architecture"]["output_modalities"] = ["text", "image"]
+        image_capable["pricing"]["image_output"] = "0.001"
+        pipeline = run_pipeline(
+            [text_only, image_capable],
+            input_modalities=["text"],
+            output_modality="image",
+            estimated_output_images=1,
+            free_only=False,
+            paid_consent=True,
+            max_cost_usd=0.01,
+            required_context=1024,
+        )
+        self.assertEqual([item["id"] for item in pipeline["eligible"]], ["test/image"])
+        self.assertAlmostEqual(
+            pipeline["eligible"][0]["_router_estimated_cost_usd"],
+            0.001,
+        )
+        self.assertTrue(any(
+            reason["constraint"] == "modality"
+            for reason in pipeline["rejected"][0]["reasons"]
+        ))
+
 
 class RankerTests(unittest.TestCase):
-    def test_fast_prefers_known_low_latency_and_thinking_prefers_reasoning(self):
+    def test_speed_is_primary_in_fast_and_thinking_modes(self):
         fast = model("test/fast", latency=100, reasoning=False)
         thinking = model("test/thinking", latency=300, reasoning=True)
         self.assertEqual(
@@ -160,6 +231,37 @@ class RankerTests(unittest.TestCase):
         )
         self.assertEqual(
             rank_models([fast, thinking], "thinking")[0]["id"],
+            "test/fast",
+        )
+
+    def test_speed_has_more_weight_in_fast_mode_than_model_quality(self):
+        fast = model("test/fast", latency=100)
+        fast["benchmarks"] = {
+            "artificial_analysis": {"intelligence_index": 20}
+        }
+        capable = model("test/capable", latency=300)
+        capable["benchmarks"] = {
+            "artificial_analysis": {"intelligence_index": 100}
+        }
+
+        self.assertEqual(
+            rank_models([capable, fast], "fast")[0]["id"],
+            "test/fast",
+        )
+
+    def test_thinking_uses_reasoning_and_task_capability_with_speed(self):
+        fast = model("test/fast", latency=100)
+        fast["benchmarks"] = {
+            "artificial_analysis": {"coding_index": 20}
+        }
+        thinking = model("test/thinking", latency=150, reasoning=True)
+        thinking["benchmarks"] = {
+            "artificial_analysis": {"coding_index": 100}
+        }
+        slow = model("test/slow", latency=300)
+
+        self.assertEqual(
+            rank_models([fast, slow, thinking], "thinking", "coding")[0]["id"],
             "test/thinking",
         )
 
@@ -308,6 +410,98 @@ class InferenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["attempts"][0].get("success", False))
         self.assertTrue(result["attempts"][1]["success"])
 
+    async def test_image_only_response_is_success_and_requests_image_modality(self):
+        image_url = "data:image/png;base64,aW1hZ2U="
+
+        class Response:
+            status_code = 200
+            is_error = False
+
+            @staticmethod
+            def json():
+                return {
+                    "choices": [{
+                        "message": {
+                            "content": None,
+                            "images": [{
+                                "type": "image_url",
+                                "image_url": {"url": image_url},
+                            }],
+                        },
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 0},
+                }
+
+        class Client:
+            payload = None
+            headers = None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def post(self, *_args, **kwargs):
+                self.payload = kwargs["json"]
+                self.headers = kwargs["headers"]
+                return Response()
+
+        client = Client()
+        with (
+            patch.object(inference, "OPENROUTER_API_KEY", "test-key"),
+            patch.object(inference.httpx, "AsyncClient", return_value=client),
+        ):
+            result = await inference.generate_response(
+                [{"role": "user", "content": "Make an image."}],
+                [{"id": "test/image"}],
+                latency_budget_ms=1000,
+                output_modality="image",
+            )
+
+        self.assertEqual(result["images"], [image_url])
+        self.assertEqual(result["content"], "")
+        self.assertEqual(client.payload["modalities"], ["image", "text"])
+        self.assertEqual(client.headers["Authorization"], "Bearer test-key")
+
+    async def test_provider_rejection_reports_status_and_provider_message(self):
+        response = httpx.Response(
+            401,
+            json={
+                "error": {
+                    "code": 401,
+                    "message": "Invalid API key",
+                }
+            },
+        )
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def post(self, *_args, **_kwargs):
+                return response
+
+        with (
+            patch.object(inference, "OPENROUTER_API_KEY", "test-key"),
+            patch.object(inference.httpx, "AsyncClient", return_value=Client()),
+        ):
+            with self.assertRaises(inference.InferenceError) as error:
+                await inference.generate_response(
+                    [{"role": "user", "content": "hello"}],
+                    [{"id": "test/first"}, {"id": "test/second"}],
+                    latency_budget_ms=5000,
+                )
+
+        self.assertIn("provider", str(error.exception).lower())
+        self.assertIn("HTTP 401", str(error.exception))
+        self.assertIn("Invalid API key", str(error.exception))
+        self.assertNotIn("latency budget expired", str(error.exception).lower())
+        self.assertEqual(len(error.exception.attempts), 2)
+
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -316,6 +510,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             (),
             {"models": [model()], "list_models": lambda self: list(self.models)},
         )()
+        api.app.state.conversations = {}
         self.log_patch = patch.object(api, "_write_log")
         self.log_patch.start()
         self.addCleanup(self.log_patch.stop)
@@ -345,6 +540,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["selected_model"], "test/free")
         self.assertIn("analysis", response.json())
 
+<<<<<<< HEAD
     async def test_judge_endpoints_list_update_and_reset_models(self):
         registry = type("Registry", (), {})()
         registry.models = [model("test/free", latency=100)]
@@ -414,10 +610,27 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             "total_latency_ms": 24,
             "usage": {"prompt_tokens": 6, "completion_tokens": 10},
             "attempts": [{"model": "test/strong", "success": True}],
+=======
+    async def test_image_request_filters_for_image_output_and_returns_images(self):
+        image_model = model("test/image", price="0")
+        image_model["architecture"]["output_modalities"] = ["text", "image"]
+        image_model["pricing"]["image_output"] = "0.001"
+        api.app.state.registry.models = [image_model]
+        image_url = "data:image/png;base64,aW1hZ2U="
+        generate = AsyncMock(return_value={
+            "model": "test/image",
+            "content": "",
+            "images": [image_url],
+            "latency_ms": 24,
+            "total_latency_ms": 24,
+            "usage": {"prompt_tokens": 2, "completion_tokens": 0},
+            "attempts": [{"model": "test/image", "success": True}],
+>>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
         })
         with patch.object(api, "generate_response", generate):
             response = await self.client.post(
                 "/api/chat",
+<<<<<<< HEAD
                 json={"prompt": "What is a quasar?"},
             )
 
@@ -431,6 +644,198 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             reason["constraint"] == "capability"
             for reason in rejected_weak["reasons"]
         ))
+=======
+                json={"prompt": "Make an image of a cat", "allow_paid": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["constraints"]["input_modalities"], ["text"])
+        self.assertEqual(response.json()["constraints"]["output_modality"], "image")
+        self.assertEqual(response.json()["images"], [image_url])
+        self.assertEqual(
+            generate.await_args.kwargs["output_modality"],
+            "image",
+        )
+
+    async def test_uploaded_image_is_input_modality_not_requested_output(self):
+        image_model = model("test/image-input", price="0", modalities=["text", "image"])
+        api.app.state.registry.models = [image_model]
+        generate = AsyncMock(return_value={
+            "model": "test/image-input",
+            "content": "It is a cat.",
+            "images": [],
+            "latency_ms": 24,
+            "total_latency_ms": 24,
+            "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+            "attempts": [{"model": "test/image-input", "success": True}],
+        })
+        with patch.object(api, "generate_response", generate):
+            response = await self.client.post(
+                "/api/chat",
+                json={
+                    "prompt": "What is in this picture?",
+                    "attachments": [{
+                        "name": "cat.png",
+                        "mime_type": "image/png",
+                        "data": "data:image/png;base64,aW1hZ2U=",
+                    }],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["constraints"]["input_modalities"],
+            ["text", "image"],
+        )
+        self.assertEqual(response.json()["constraints"]["output_modality"], "text")
+        self.assertEqual(generate.await_args.kwargs["output_modality"], "text")
+
+    async def test_chat_sends_previous_turns_for_same_conversation(self):
+        generate = AsyncMock(side_effect=[
+            {
+                "model": "test/free",
+                "content": "The document says revenue grew.",
+                "latency_ms": 24,
+                "total_latency_ms": 24,
+                "usage": {"prompt_tokens": 8, "completion_tokens": 6},
+                "attempts": [{"model": "test/free", "success": True}],
+            },
+            {
+                "model": "test/free",
+                "content": "It grew by 12%.",
+                "latency_ms": 24,
+                "total_latency_ms": 24,
+                "usage": {"prompt_tokens": 20, "completion_tokens": 5},
+                "attempts": [{"model": "test/free", "success": True}],
+            },
+        ])
+        conversation_id = "5a515808-59cc-4d26-8ee7-c8f4e9b7e979"
+        with patch.object(api, "generate_response", generate):
+            first = await self.client.post(
+                "/api/chat",
+                json={
+                    "conversation_id": conversation_id,
+                    "prompt": "The report says revenue grew by 12%.",
+                },
+            )
+            second = await self.client.post(
+                "/api/chat",
+                json={
+                    "conversation_id": conversation_id,
+                    "prompt": "How much did it grow?",
+                },
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["conversation_id"], conversation_id)
+        second_request_messages = generate.await_args_list[1].args[0]
+        self.assertEqual(
+            [message["role"] for message in second_request_messages],
+            ["system", "user", "assistant", "user"],
+        )
+        self.assertIn(
+            "revenue grew by 12%",
+            second_request_messages[1]["content"],
+        )
+        self.assertEqual(
+            second_request_messages[2]["content"],
+            "The document says revenue grew.",
+        )
+        self.assertGreater(
+            second.json()["analysis"]["estimated_input_tokens"],
+            estimate_tokens("How much did it grow?"),
+        )
+
+    async def test_distinct_conversation_ids_do_not_share_history(self):
+        generate = AsyncMock(return_value={
+            "model": "test/free",
+            "content": "Answer.",
+            "latency_ms": 24,
+            "total_latency_ms": 24,
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            "attempts": [{"model": "test/free", "success": True}],
+        })
+        with patch.object(api, "generate_response", generate):
+            await self.client.post(
+                "/api/chat",
+                json={
+                    "conversation_id": "a9179f00-897e-4437-b83b-46b8d3f96c3b",
+                    "prompt": "first chat secret",
+                },
+            )
+            await self.client.post(
+                "/api/chat",
+                json={
+                    "conversation_id": "ba148adb-d94c-472f-aaf1-6f432e827840",
+                    "prompt": "second chat question",
+                },
+            )
+
+        second_messages = generate.await_args_list[1].args[0]
+        self.assertEqual(len(second_messages), 2)
+        self.assertNotIn("first chat secret", str(second_messages))
+
+    async def test_chat_uses_extracted_pdf_as_text_model_input(self):
+        generate = AsyncMock(return_value={
+            "model": "test/free",
+            "content": "PDF summary.",
+            "latency_ms": 24,
+            "total_latency_ms": 24,
+            "usage": {"prompt_tokens": 12, "completion_tokens": 4},
+            "attempts": [{"model": "test/free", "success": True}],
+        })
+        with (
+            patch.object(
+                api,
+                "_decode_attachment",
+                return_value=("text/plain", b"Contract clause text"),
+            ),
+            patch.object(api, "generate_response", generate),
+        ):
+            response = await self.client.post(
+                "/api/chat",
+                json={
+                    "prompt": "Summarize this",
+                    "attachments": [{
+                        "name": "contract.pdf",
+                        "mime_type": "application/pdf",
+                        "data": "cGRm",
+                    }],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["constraints"]["input_modalities"],
+            ["text"],
+        )
+        call_messages = generate.await_args.args[0]
+        self.assertIn("Contract clause text", call_messages[1]["content"])
+        self.assertNotIn('"type": "file"', str(call_messages[1]["content"]))
+    async def test_chat_uses_temperature_for_selected_mode(self):
+        for mode, temperature in (("fast", 0.7), ("thinking", 0.3)):
+            with self.subTest(mode=mode):
+                generate = AsyncMock(return_value={
+                    "model": "test/free",
+                    "content": "Hello.",
+                    "latency_ms": 24,
+                    "total_latency_ms": 24,
+                    "usage": {},
+                    "attempts": [],
+                })
+                with patch.object(api, "generate_response", generate):
+                    response = await self.client.post(
+                        "/api/chat",
+                        json={"prompt": "Say hello", "mode": mode},
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    generate.await_args.kwargs["temperature"],
+                    temperature,
+                )
+>>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
 
     async def test_only_paid_candidates_require_consent(self):
         api.app.state.registry.models = [model("test/paid", price="0.000001")]

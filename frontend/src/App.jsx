@@ -11,6 +11,31 @@ const suggestions = [
   { icon: '↗', title: 'Summarize a document', prompt: 'Summarize the key points and action items in this document.' },
 ]
 
+function createConversationId() {
+  return globalThis.crypto.randomUUID()
+}
+const demoPlans = [
+  {
+    id: 'usage',
+    name: 'Pay as you go',
+    price: 'Usage-based',
+    description: 'Pay only for the model usage you need.',
+  },
+  {
+    id: 'pro',
+    name: 'Pro',
+    price: '₹2000 / month',
+    description: 'Higher usage limits for individual workflows.',
+    popular: true,
+  },
+  {
+    id: 'team',
+    name: 'Team',
+    price: '₹5000 / user / month',
+    description: 'Shared access and controls for a team.',
+  },
+]
+
 function fileToAttachment(file) {
   const extension = file.name.split('.').pop()?.toLowerCase()
   const inferredType = {
@@ -46,6 +71,7 @@ function fileToAttachment(file) {
 }
 
 function App() {
+  const [conversationId, setConversationId] = useState(createConversationId)
   const [prompt, setPrompt] = useState('')
   const [mode, setMode] = useState('fast')
   const [files, setFiles] = useState([])
@@ -53,6 +79,7 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [health, setHealth] = useState(null)
+<<<<<<< HEAD
   const [allowPaid, setAllowPaid] = useState(false)
   const [judgeOpen, setJudgeOpen] = useState(false)
   const [judgeModels, setJudgeModels] = useState([])
@@ -62,9 +89,20 @@ function App() {
   const [judgeBusy, setJudgeBusy] = useState(false)
   const [judgeMessage, setJudgeMessage] = useState('')
   const [judgeError, setJudgeError] = useState('')
+=======
+  const [planModal, setPlanModal] = useState(null)
+  const [selectedPlan, setSelectedPlan] = useState('')
+  const [planConfirmed, setPlanConfirmed] = useState(false)
+>>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
   const fileInput = useRef(null)
   const messageEnd = useRef(null)
   const promptInput = useRef(null)
+
+  function openPlanModal(reason) {
+    setPlanModal(reason)
+    setSelectedPlan('')
+    setPlanConfirmed(false)
+  }
 
   useEffect(() => {
     fetch(`${API_BASE}/api/health`)
@@ -80,7 +118,7 @@ function App() {
     messageEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, busy])
 
-  async function sendMessage(text = prompt, attachedFiles = files, paid = allowPaid) {
+  async function sendMessage(text = prompt, attachedFiles = files) {
     const trimmed = text.trim()
     if ((!trimmed && attachedFiles.length === 0) || busy) return
 
@@ -101,10 +139,11 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          conversation_id: conversationId,
           prompt: trimmed,
           mode,
           attachments,
-          allow_paid: paid,
+          allow_paid: false,
         }),
       })
       const result = await response.json()
@@ -115,8 +154,8 @@ function App() {
           content: 'No free model meets every constraint for this request. A paid model can handle it within your cost limit.',
           explanation: result,
           paywall: true,
-          retry: { prompt: trimmed, attachments: attachedFiles },
         }])
+        openPlanModal('required')
         return
       }
 
@@ -137,6 +176,7 @@ function App() {
       setMessages((current) => [...current, {
         role: 'assistant',
         content: result.answer,
+        images: result.images || [],
         explanation: result,
       }])
     } catch (requestError) {
@@ -226,6 +266,11 @@ function App() {
     sendMessage()
   }
 
+  function confirmPlan() {
+    if (!selectedPlan) return
+    setPlanConfirmed(true)
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -241,6 +286,7 @@ function App() {
               : health?.status === 'offline' ? 'Backend offline' : 'Connecting'}
           </span>
           <button
+<<<<<<< HEAD
             className="new-chat-button judge-toggle"
             type="button"
             aria-expanded={judgeOpen}
@@ -251,6 +297,21 @@ function App() {
             }}
           >
             Judge controls
+=======
+            className="new-chat-button"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setConversationId(createConversationId())
+              setMessages([])
+              setPrompt('')
+              setFiles([])
+              setError('')
+              setAllowPaid(false)
+            }}
+          >
+            + New chat
+>>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
           </button>
         </div>
       </header>
@@ -354,6 +415,7 @@ function App() {
                 <div className="avatar">{message.role === 'user' ? 'Y' : 'M'}</div>
                 <div className="message-body">
                   <div className="message-author">{message.role === 'user' ? 'You' : 'ModelRouter'}</div>
+<<<<<<< HEAD
                   {message.content && (
                     <div className={`message-content ${message.failed ? 'message-error' : ''} ${message.role === 'assistant' ? 'markdown-content' : ''}`}>
                       {message.role === 'assistant' ? (
@@ -361,6 +423,19 @@ function App() {
                           {message.content}
                         </ReactMarkdown>
                       ) : message.content}
+=======
+                  {message.content && <div className={`message-content ${message.failed ? 'message-error' : ''}`}>{message.content}</div>}
+                  {message.images?.length > 0 && (
+                    <div className="generated-images">
+                      {message.images.map((image, imageIndex) => (
+                        <img
+                          key={`${index}-${imageIndex}`}
+                          src={image}
+                          alt={`Generated image ${imageIndex + 1}`}
+                          loading="lazy"
+                        />
+                      ))}
+>>>>>>> 8b5f572fdd378843bcb8b28f9c4c7a8121aa84e9
                     </div>
                   )}
                   {message.files?.length > 0 && (
@@ -378,23 +453,20 @@ function App() {
                   {message.paywall && (
                     <div className="paywall-card">
                       <div className="paywall-title">Paid model needed</div>
-                      <p>Estimated cost stays within your $0.02 default budget. Review the alternatives, then choose whether to continue.</p>
+                      <p>This request needs a paid model. Review the demo plans; paid model requests are disabled while billing is not connected.</p>
                       <button
                         className="paid-button"
                         type="button"
-                        onClick={() => {
-                          setAllowPaid(true)
-                          sendMessage(message.retry.prompt, message.retry.attachments, true)
-                        }}
+                        onClick={() => openPlanModal('required')}
                       >
-                        Continue with a paid model <span>→</span>
+                        View plans <span>→</span>
                       </button>
                     </div>
                   )}
                   {message.explanation && (
                     <details className="explanation">
                       <summary>Routing explanation</summary>
-                      <Explanation data={message.explanation} attempts={message.attempts || message.explanation.attempts} />
+                      <Explanation data={message.explanation} />
                     </details>
                   )}
                 </div>
@@ -435,7 +507,7 @@ function App() {
               }
             }}
             placeholder="Message ModelRouter..."
-            rows="1"
+            rows="2"
             aria-label="Message ModelRouter"
           />
           <div className="composer-controls">
@@ -457,8 +529,8 @@ function App() {
               </label>
             </div>
             <div className="composer-right">
-              <label className="paid-toggle" title="Permit paid models up to the cost limit">
-                <input type="checkbox" checked={allowPaid} onChange={(event) => setAllowPaid(event.target.checked)} />
+              <label className="paid-toggle" title="View demo plans; paid model requests are currently disabled">
+                <input type="checkbox" checked={false} onChange={() => openPlanModal('manual')} />
                 <span>Paid</span>
               </label>
               <button className="send-button" type="submit" disabled={busy || (!prompt.trim() && files.length === 0)} aria-label="Send message">
@@ -469,11 +541,100 @@ function App() {
         </form>
         <div className="disclaimer">ModelRouter can make mistakes. Every route is filtered against your hard constraints.</div>
       </div>
+      {planModal && (
+        <div
+          className="plan-modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setPlanModal(null)
+          }}
+        >
+          <section
+            className="plan-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="plan-modal-title"
+          >
+            <button
+              className="plan-modal-close"
+              type="button"
+              aria-label="Close plans"
+              onClick={() => setPlanModal(null)}
+            >
+              ×
+            </button>
+            {planConfirmed ? (
+              <div className="plan-confirmation">
+                <span className="plan-confirmation-icon">✓</span>
+                <p className="plan-eyebrow">DEMO ONLY</p>
+                <h2 id="plan-modal-title">Plan selected</h2>
+                <p>
+                  {demoPlans.find((plan) => plan.id === selectedPlan)?.name} is
+                  selected for this demo. No payment was taken. Billing is not
+                  connected, so paid model requests remain disabled.
+                </p>
+                <button
+                  className="plan-primary-button"
+                  type="button"
+                  onClick={() => setPlanModal(null)}
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="plan-eyebrow">MODELROUTER PLANS · DEMO</p>
+                <h2 id="plan-modal-title">
+                  {planModal === 'required' ? 'A paid model is needed' : 'Choose a plan'}
+                </h2>
+                <p className="plan-modal-copy">
+                  Select a plan to preview the flow. This is a UI demo only;
+                  payments and paid model access are not connected.
+                </p>
+                <div className="plan-options">
+                  {demoPlans.map((plan) => (
+                    <label
+                      className={`plan-option ${selectedPlan === plan.id ? 'selected' : ''}`}
+                      key={plan.id}
+                    >
+                      <input
+                        type="radio"
+                        name="demo-plan"
+                        value={plan.id}
+                        checked={selectedPlan === plan.id}
+                        onChange={() => setSelectedPlan(plan.id)}
+                      />
+                      <span className="plan-option-main">
+                        <span className="plan-option-name">
+                          {plan.name}
+                          {plan.popular && <span className="plan-popular">POPULAR</span>}
+                        </span>
+                        <span className="plan-option-description">{plan.description}</span>
+                      </span>
+                      <span className="plan-option-price">{plan.price}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="plan-modal-footer">
+                  <span>No charge · demo selection only</span>
+                  <button
+                    className="plan-primary-button"
+                    type="button"
+                    disabled={!selectedPlan}
+                    onClick={confirmPlan}
+                  >
+                    Select plan
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </main>
   )
 }
 
-function Explanation({ data, attempts }) {
+function Explanation({ data }) {
   const analysis = data.analysis
   const constraints = data.constraints || {}
   const rejected = data.rejected || []
@@ -499,24 +660,24 @@ function Explanation({ data, attempts }) {
           Checked {data.stage_counts.catalogue} models · {data.stage_counts.eligible} eligible
         </p>
       )}
-      {data.ranked_models?.length > 0 && (
-        <div className="rejection-list">
-          <strong>Eligible models, in rank order</strong>
-          {data.ranked_models.map((model, index) => (
-            <div className="rejection-row" key={model.id}>
-              <span>{index + 1}. {model.name}{model.id === data.selected_model ? ' · selected' : ''}</span>
-              <span>
-                {model.measured_latency_ms != null ? `${model.measured_latency_ms} ms` : 'latency unknown'}
-                {' · '}
-                {model.estimated_cost_usd != null ? `$${model.estimated_cost_usd.toFixed(6)} est.` : 'cost unknown'}
-              </span>
-            </div>
-          ))}
+      {data.ranked_models.slice(0, 5).map((model, index) => (
+        <div className="rejection-row" key={model.id}>
+          <span>{index + 1}. {model.name}{model.id === data.selected_model ? ' · selected' : ''}</span>
+          <span>
+            {model.measured_latency_ms != null ? `${model.measured_latency_ms} ms` : 'latency unknown'}
+            {' · '}
+            {model.estimated_cost_usd != null ? `$${model.estimated_cost_usd.toFixed(6)} est.` : 'cost unknown'}
+          </span>
         </div>
+      ))}
+      {data.ranked_models.length > 5 && (
+        <p>Showing 5 of {data.ranked_models.length} ranked models.</p>
       )}
       {constraints && (
         <div className="constraint-tags">
           <span>{constraints.mode || 'fast'} preference</span>
+          <span>input: {(constraints.input_modalities || ['text']).join(' + ')}</span>
+          <span>output: {constraints.output_modality || 'text'}</span>
           <span>{constraints.max_latency_ms?.toLocaleString()} ms budget</span>
           <span>${constraints.max_cost_usd?.toFixed(4)} max cost</span>
           <span>{constraints.required_context_tokens?.toLocaleString()} context tokens</span>
@@ -534,7 +695,7 @@ function Explanation({ data, attempts }) {
           ))}
         </div>
       )}
-      {attempts?.length > 0 && (
+      {/* {attempts?.length > 0 && (
         <div className="rejection-list">
           <strong>Inference attempts</strong>
           {attempts.map((attempt, index) => (
@@ -543,17 +704,17 @@ function Explanation({ data, attempts }) {
             </div>
           ))}
         </div>
-      )}
+      )} */}
       {rejected.length > 0 && (
         <div className="rejection-list">
           <strong>Rejected models ({rejected.length})</strong>
-          {rejected.slice(0, 15).map((item) => (
+          {rejected.slice(0, 5).map((item) => (
             <div className="rejection-row" key={item.id}>
               <span>{item.name || item.id}</span>
               <span>{item.reasons.map((reason) => reason.reason).join(' · ')}</span>
             </div>
           ))}
-          {rejected.length > 15 && <p>Showing 15 of {rejected.length} rejected models.</p>}
+          {rejected.length > 5 && <p>Showing 5 of {rejected.length} rejected models.</p>}
         </div>
       )}
     </div>
