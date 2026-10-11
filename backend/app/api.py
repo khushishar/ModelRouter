@@ -83,16 +83,6 @@ app = FastAPI(
     description="Cost-, latency-, context-, and capability-aware inference gateway",
     lifespan=lifespan,
 )
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://modelrouter-1.onrender.com",
-    ],
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
-)
 
 
 @app.middleware("http")
@@ -744,3 +734,17 @@ async def chat(http_request: Request, request: ChatRequest) -> Any:
         "timestamp": time.time(),
     })
     return response
+
+
+fastapi_app = app
+app = CORSMiddleware(
+    app=fastapi_app,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://modelrouter-1.onrender.com",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+app.state = fastapi_app.state

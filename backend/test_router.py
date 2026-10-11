@@ -831,6 +831,33 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     temperature,
                 )
 
+    async def test_unhandled_chat_error_keeps_cors_headers(self):
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(
+                app=api.app,
+                raise_app_exceptions=False,
+            ),
+            base_url="http://test",
+        )
+        await self.enterAsyncContext(client)
+
+        with patch.object(
+            api,
+            "generate_response",
+            side_effect=RuntimeError("Unexpected inference failure"),
+        ):
+            response = await client.post(
+                "/api/chat",
+                headers={"Origin": "https://modelrouter-1.onrender.com"},
+                json={"prompt": "Say hello"},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "https://modelrouter-1.onrender.com",
+        )
+
     async def test_only_paid_candidates_require_consent(self):
         api.app.state.registry.models = [model("test/paid", price="0.000001")]
         response = await self.client.post(
