@@ -79,14 +79,14 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [health, setHealth] = useState(null)
-  const [judgeOpen, setJudgeOpen] = useState(false)
-  const [judgeModels, setJudgeModels] = useState([])
-  const [judgeModelId, setJudgeModelId] = useState('')
-  const [judgeAvailable, setJudgeAvailable] = useState(true)
-  const [judgeLatency, setJudgeLatency] = useState('')
-  const [judgeBusy, setJudgeBusy] = useState(false)
-  const [judgeMessage, setJudgeMessage] = useState('')
-  const [judgeError, setJudgeError] = useState('')
+  const [preferencesOpen, setPreferencesOpen] = useState(false)
+  const [preferenceModels, setPreferenceModels] = useState([])
+  const [preferenceModelId, setPreferenceModelId] = useState('')
+  const [preferenceAvailable, setPreferenceAvailable] = useState(true)
+  const [preferenceLatency, setPreferenceLatency] = useState('')
+  const [preferencesBusy, setPreferencesBusy] = useState(false)
+  const [preferencesMessage, setPreferencesMessage] = useState('')
+  const [preferencesError, setPreferencesError] = useState('')
   const [planModal, setPlanModal] = useState(null)
   const [selectedPlan, setSelectedPlan] = useState('')
   const [planConfirmed, setPlanConfirmed] = useState(false)
@@ -190,72 +190,72 @@ function App() {
     }
   }
 
-  async function refreshJudgeModels() {
+  async function refreshPreferenceModels() {
     try {
-      const response = await fetch(`${API_BASE}/api/judge/models`)
+      const response = await fetch(`${API_BASE}/api/preferences/models`)
       const result = await response.json()
       if (!response.ok) {
-        throw new Error(result.detail || 'Could not load judge controls.')
+        throw new Error(result.detail || 'Could not load user preferences.')
       }
-      setJudgeModels(result.models)
-      const selected = result.models.find((item) => item.id === judgeModelId)
+      setPreferenceModels(result.models)
+      const selected = result.models.find((item) => item.id === preferenceModelId)
         || result.models[0]
       if (selected) {
-        setJudgeModelId(selected.id)
-        setJudgeAvailable(selected.available)
-        setJudgeLatency(selected.measured_latency_ms ?? '')
+        setPreferenceModelId(selected.id)
+        setPreferenceAvailable(selected.available)
+        setPreferenceLatency(selected.measured_latency_ms ?? '')
       }
-      setJudgeError('')
+      setPreferencesError('')
     } catch (requestError) {
-      setJudgeError(requestError.message || 'Could not load judge controls.')
+      setPreferencesError(requestError.message || 'Could not load user preferences.')
     }
   }
 
-  async function saveJudgeOverride() {
-    if (!judgeModelId || judgeBusy) return
-    setJudgeBusy(true)
-    setJudgeMessage('')
-    setJudgeError('')
+  async function savePreferenceOverride() {
+    if (!preferenceModelId || preferencesBusy) return
+    setPreferencesBusy(true)
+    setPreferencesMessage('')
+    setPreferencesError('')
     try {
-      const response = await fetch(`${API_BASE}/api/judge/overrides`, {
+      const response = await fetch(`${API_BASE}/api/preferences/overrides`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model_id: judgeModelId,
-          available: judgeAvailable,
-          measured_latency_ms: judgeLatency === '' ? null : Number(judgeLatency),
+          model_id: preferenceModelId,
+          available: preferenceAvailable,
+          measured_latency_ms: preferenceLatency === '' ? null : Number(preferenceLatency),
         }),
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || 'Could not save override.')
-      await refreshJudgeModels()
-      setJudgeMessage('Override saved. It will affect the next routing request.')
+      await refreshPreferenceModels()
+      setPreferencesMessage('Saved globally. This affects routing for every visitor.')
     } catch (requestError) {
-      setJudgeError(requestError.message || 'Could not save override.')
+      setPreferencesError(requestError.message || 'Could not save override.')
     } finally {
-      setJudgeBusy(false)
+      setPreferencesBusy(false)
     }
   }
 
-  async function resetJudgeOverride() {
-    if (!judgeModelId || judgeBusy) return
-    setJudgeBusy(true)
-    setJudgeMessage('')
-    setJudgeError('')
+  async function resetPreferenceOverride() {
+    if (!preferenceModelId || preferencesBusy) return
+    setPreferencesBusy(true)
+    setPreferencesMessage('')
+    setPreferencesError('')
     try {
-      const response = await fetch(`${API_BASE}/api/judge/overrides/reset`, {
+      const response = await fetch(`${API_BASE}/api/preferences/overrides/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: judgeModelId }),
+        body: JSON.stringify({ model_id: preferenceModelId }),
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || 'Could not reset override.')
-      await refreshJudgeModels()
-      setJudgeMessage('Override reset to catalogue defaults.')
+      await refreshPreferenceModels()
+      setPreferencesMessage('Override reset to catalogue defaults.')
     } catch (requestError) {
-      setJudgeError(requestError.message || 'Could not reset override.')
+      setPreferencesError(requestError.message || 'Could not reset override.')
     } finally {
-      setJudgeBusy(false)
+      setPreferencesBusy(false)
     }
   }
 
@@ -290,16 +290,16 @@ function App() {
               : health?.status === 'offline' ? 'Backend offline' : 'Connecting'}
           </span>
           <button
-            className="new-chat-button judge-toggle"
+            className="new-chat-button preferences-toggle"
             type="button"
-            aria-expanded={judgeOpen}
+            aria-expanded={preferencesOpen}
             onClick={() => {
-              const opening = !judgeOpen
-              setJudgeOpen(opening)
-              if (opening) refreshJudgeModels()
+              const opening = !preferencesOpen
+              setPreferencesOpen(opening)
+              if (opening) refreshPreferenceModels()
             }}
           >
-            Judge controls
+            User preferences
           </button>
           <button
             className="new-chat-button"
@@ -318,29 +318,29 @@ function App() {
         </div>
       </header>
 
-      {judgeOpen && (
-        <section className="judge-panel" aria-label="Judge model controls">
-          <div className="judge-panel-heading">
+      {preferencesOpen && (
+        <section className="preferences-panel" aria-label="Global user preferences">
+          <div className="preferences-panel-heading">
             <div>
-              <h2>Judge controls</h2>
-              <p>Simulate model availability and latency for the next routing decision.</p>
+              <h2>User preferences</h2>
+              <p>Change model availability and simulated latency for routing.</p>
             </div>
-            <span>Local machine only</span>
+            <span>Shared on this backend · any visitor can change</span>
           </div>
-          <div className="judge-controls">
+          <div className="preferences-controls">
             <label>
               <span>Model</span>
               <select
-                value={judgeModelId}
+                value={preferenceModelId}
                 onChange={(event) => {
-                  const selected = judgeModels.find((item) => item.id === event.target.value)
-                  setJudgeModelId(event.target.value)
-                  setJudgeAvailable(selected?.available ?? true)
-                  setJudgeLatency(selected?.measured_latency_ms ?? '')
-                  setJudgeMessage('')
+                  const selected = preferenceModels.find((item) => item.id === event.target.value)
+                  setPreferenceModelId(event.target.value)
+                  setPreferenceAvailable(selected?.available ?? true)
+                  setPreferenceLatency(selected?.measured_latency_ms ?? '')
+                  setPreferencesMessage('')
                 }}
               >
-                {judgeModels.map((item) => (
+                {preferenceModels.map((item) => (
                   <option value={item.id} key={item.id}>
                     {item.name}{item.overridden ? ' · overridden' : ''}
                   </option>
@@ -354,35 +354,35 @@ function App() {
                 min="0"
                 max="120000"
                 step="100"
-                value={judgeLatency}
-                onChange={(event) => setJudgeLatency(event.target.value)}
+                value={preferenceLatency}
+                onChange={(event) => setPreferenceLatency(event.target.value)}
                 placeholder="Unknown"
               />
             </label>
-            <label className="judge-availability">
+            <label className="preferences-availability">
               <input
                 type="checkbox"
-                checked={judgeAvailable}
-                onChange={(event) => setJudgeAvailable(event.target.checked)}
+                checked={preferenceAvailable}
+                onChange={(event) => setPreferenceAvailable(event.target.checked)}
               />
               <span>Model available</span>
             </label>
-            <div className="judge-actions">
-              <button type="button" onClick={saveJudgeOverride} disabled={judgeBusy || !judgeModelId}>
-                Save override
+            <div className="preferences-actions">
+              <button type="button" onClick={savePreferenceOverride} disabled={preferencesBusy || !preferenceModelId}>
+                Save globally
               </button>
               <button
-                className="judge-reset"
+                className="preferences-reset"
                 type="button"
-                onClick={resetJudgeOverride}
-                disabled={judgeBusy || !judgeModels.find((item) => item.id === judgeModelId)?.overridden}
+                onClick={resetPreferenceOverride}
+                disabled={preferencesBusy || !preferenceModels.find((item) => item.id === preferenceModelId)?.overridden}
               >
                 Reset to catalogue
               </button>
             </div>
           </div>
-          {judgeError && <p className="judge-status judge-error">{judgeError}</p>}
-          {judgeMessage && <p className="judge-status">{judgeMessage}</p>}
+          {preferencesError && <p className="preferences-status preferences-error">{preferencesError}</p>}
+          {preferencesMessage && <p className="preferences-status">{preferencesMessage}</p>}
         </section>
       )}
 

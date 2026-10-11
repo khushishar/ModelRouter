@@ -59,7 +59,7 @@ class ChatRequest(BaseModel):
     required_context_tokens: int | None = Field(default=None, gt=0)
 
 
-class JudgeOverrideRequest(BaseModel):
+class PreferenceOverrideRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=255)
     available: bool
     measured_latency_ms: float | None = Field(
@@ -67,7 +67,7 @@ class JudgeOverrideRequest(BaseModel):
     )
 
 
-class JudgeOverrideResetRequest(BaseModel):
+class PreferenceOverrideResetRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=255)
 
 
@@ -107,18 +107,8 @@ def _write_log(event: dict[str, Any]) -> None:
         log_file.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
 
 
-def _require_loopback_judge(request: Request) -> None:
-    client_host = request.client.host if request.client else None
-    if client_host not in {"127.0.0.1", "::1", "testclient"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Judge controls are only available from this machine.",
-        )
-
-
-@app.get("/api/judge/models")
-async def judge_models(http_request: Request) -> dict[str, Any]:
-    _require_loopback_judge(http_request)
+@app.get("/api/preferences/models")
+async def preference_models() -> dict[str, Any]:
     registry: ModelRegistry | None = getattr(app.state, "registry", None)
     if registry is None:
         raise HTTPException(status_code=503, detail="Model catalogue is not ready.")
@@ -143,12 +133,10 @@ async def judge_models(http_request: Request) -> dict[str, Any]:
     }
 
 
-@app.post("/api/judge/overrides")
-async def set_judge_override(
-    http_request: Request,
-    override: JudgeOverrideRequest,
+@app.post("/api/preferences/overrides")
+async def set_preference_override(
+    override: PreferenceOverrideRequest,
 ) -> dict[str, str]:
-    _require_loopback_judge(http_request)
     registry: ModelRegistry | None = getattr(app.state, "registry", None)
     if registry is None:
         raise HTTPException(status_code=503, detail="Model catalogue is not ready.")
@@ -163,7 +151,7 @@ async def set_judge_override(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _write_log({
-        "event": "judge_override_updated",
+        "event": "preference_override_updated",
         "model_id": override.model_id,
         "available": override.available,
         "measured_latency_ms": override.measured_latency_ms,
@@ -172,12 +160,10 @@ async def set_judge_override(
     return {"status": "updated"}
 
 
-@app.post("/api/judge/overrides/reset")
-async def reset_judge_override(
-    http_request: Request,
-    override: JudgeOverrideResetRequest,
+@app.post("/api/preferences/overrides/reset")
+async def reset_preference_override(
+    override: PreferenceOverrideResetRequest,
 ) -> dict[str, str]:
-    _require_loopback_judge(http_request)
     registry: ModelRegistry | None = getattr(app.state, "registry", None)
     if registry is None:
         raise HTTPException(status_code=503, detail="Model catalogue is not ready.")
@@ -186,7 +172,7 @@ async def reset_judge_override(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Unknown model ID.") from exc
     _write_log({
-        "event": "judge_override_reset",
+        "event": "preference_override_reset",
         "model_id": override.model_id,
         "timestamp": time.time(),
     })

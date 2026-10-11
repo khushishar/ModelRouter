@@ -378,7 +378,7 @@
   background: #23252c;
 }
 
-.judge-toggle {
+.preferences-toggle {
   border: 1px solid #3c4232;
   border-radius: 7px;
   padding: 7px 10px;
@@ -389,7 +389,7 @@
   cursor: pointer;
 }
 
-.judge-panel {
+.preferences-panel {
   margin: 13px 0 0;
   border: 1px solid #363840;
   border-radius: 11px;
@@ -397,52 +397,52 @@
   background: #191a20;
 }
 
-.judge-panel-heading,
-.judge-controls,
-.judge-actions {
+.preferences-panel-heading,
+.preferences-controls,
+.preferences-actions {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.judge-panel-heading {
+.preferences-panel-heading {
   justify-content: space-between;
   margin-bottom: 13px;
 }
 
-.judge-panel-heading h2 {
+.preferences-panel-heading h2 {
   margin: 0;
   color: #e3e4e8;
   font-size: 13px;
 }
 
-.judge-panel-heading p,
-.judge-panel-heading > span,
-.judge-status {
+.preferences-panel-heading p,
+.preferences-panel-heading > span,
+.preferences-status {
   margin: 5px 0 0;
   color: #858893;
   font-size: 10px;
 }
 
-.judge-panel-heading > span {
+.preferences-panel-heading > span {
   color: #aab894;
   white-space: nowrap;
 }
 
-.judge-controls > label:not(.judge-availability) {
+.preferences-controls > label:not(.preferences-availability) {
   flex: 1;
   min-width: 0;
 }
 
-.judge-controls > label > span:first-child {
+.preferences-controls > label > span:first-child {
   display: block;
   margin-bottom: 6px;
   color: #9da0a9;
   font-size: 10px;
 }
 
-.judge-controls select,
-.judge-controls input[type="number"] {
+.preferences-controls select,
+.preferences-controls input[type="number"] {
   width: 100%;
   min-height: 34px;
   border: 1px solid #373941;
@@ -454,7 +454,7 @@
   font-size: 11px;
 }
 
-.judge-availability {
+.preferences-availability {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -463,11 +463,11 @@
   white-space: nowrap;
 }
 
-.judge-actions {
+.preferences-actions {
   align-self: flex-end;
 }
 
-.judge-actions button {
+.preferences-actions button {
   min-height: 34px;
   border: 1px solid #67764f;
   border-radius: 6px;
@@ -480,22 +480,22 @@
   white-space: nowrap;
 }
 
-.judge-actions .judge-reset {
+.preferences-actions .preferences-reset {
   border-color: #44464e;
   color: #c8c9cf;
   background: #25262d;
 }
 
-.judge-actions button:disabled {
+.preferences-actions button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.judge-status {
+.preferences-status {
   color: #b7ce9e;
 }
 
-.judge-status.judge-error {
+.preferences-status.preferences-error {
   color: #f0a49b;
 }
 
@@ -1120,17 +1120,17 @@
     display: none;
   }
 
-  .topbar-right .judge-toggle {
+  .topbar-right .preferences-toggle {
     padding: 6px;
     font-size: 9px;
   }
 
-  .judge-controls {
+  .preferences-controls {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .judge-actions {
+  .preferences-actions {
     align-self: stretch;
   }
 

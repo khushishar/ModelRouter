@@ -62,12 +62,15 @@ Routing decisions, rejection reasons, model attempts, and cost/latency
 metadata are appended to `data/routing_logs.jsonl`. User prompt and response
 contents are deliberately not written to the routing log.
 
-For routing demonstrations, use the frontend's **Judge controls** panel to
-change a model's availability or simulated latency. Overrides persist in
-`data/model_overrides.json`, are reloaded for every chat request, and can be
-reset to catalogue defaults from the panel. The judge-control endpoints accept
-changes only from loopback clients; do not remove that restriction when
-exposing the backend to a network.
+The frontend's **User preferences** panel changes model availability or
+simulated latency. Preferences are global to the backend instance: all visitors
+served by that instance see the same overrides, and anyone can change or reset
+them. The unauthenticated endpoints are intended only for this public demo and
+must be protected before using the service in production. Overrides are stored
+in `data/model_overrides.json`, reloaded for each chat request, and can be reset
+to catalogue defaults from the panel. Render's local filesystem may be
+ephemeral, and multiple backend instances do not share this file; use a shared
+persistent database for durable multi-instance preferences.
 
 Overrides can also be edited directly in `data/model_overrides.json`:
 

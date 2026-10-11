@@ -306,7 +306,7 @@ class RegistryOverrideTests(unittest.TestCase):
                 self.assertTrue(updated["available"])
                 self.assertEqual(updated["measured_latency_ms"], 125)
 
-    def test_registry_can_save_and_reset_judge_overrides(self):
+    def test_registry_can_save_and_reset_preference_overrides(self):
         with tempfile.TemporaryDirectory() as directory:
             catalogue_path = Path(directory) / "catalogue.json"
             overrides_path = Path(directory) / "overrides.json"
@@ -540,7 +540,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["selected_model"], "test/free")
         self.assertIn("analysis", response.json())
 
-    async def test_judge_endpoints_list_update_and_reset_models(self):
+    async def test_preference_endpoints_list_update_and_reset_models(self):
         registry = type("Registry", (), {})()
         registry.models = [model("test/free", latency=100)]
         registry.list_models = lambda: registry.models
@@ -549,9 +549,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         registry.clear_override = Mock()
         api.app.state.registry = registry
 
-        listed = await self.client.get("/api/judge/models")
+        listed = await self.client.get("/api/preferences/models")
         saved = await self.client.post(
-            "/api/judge/overrides",
+            "/api/preferences/overrides",
             json={
                 "model_id": "test/free",
                 "available": False,
@@ -559,7 +559,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         reset = await self.client.post(
-            "/api/judge/overrides/reset",
+            "/api/preferences/overrides/reset",
             json={"model_id": "test/free"},
         )
 
@@ -574,7 +574,12 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reset.status_code, 200)
         registry.clear_override.assert_called_once_with("test/free")
 
-    async def test_judge_mutations_reject_non_loopback_clients(self):
+    async def test_preferences_are_available_to_remote_clients(self):
+        registry = Mock()
+        registry.models = [model("test/free", latency=100)]
+        registry.list_models.return_value = registry.models
+        registry.get_overrides.return_value = {}
+        api.app.state.registry = registry
         remote_client = httpx.AsyncClient(
             transport=httpx.ASGITransport(
                 app=api.app,
@@ -583,18 +588,31 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             base_url="http://test",
         )
         try:
-            response = await remote_client.post(
-                "/api/judge/overrides",
+            listed = await remote_client.get("/api/preferences/models")
+            saved = await remote_client.post(
+                "/api/preferences/overrides",
                 json={
                     "model_id": "test/free",
                     "available": False,
                     "measured_latency_ms": 9000,
                 },
             )
+            reset = await remote_client.post(
+                "/api/preferences/overrides/reset",
+                json={"model_id": "test/free"},
+            )
         finally:
             await remote_client.aclose()
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(reset.status_code, 200)
+        registry.set_override.assert_called_once_with(
+            "test/free",
+            available=False,
+            measured_latency_ms=9000,
+        )
+        registry.clear_override.assert_called_once_with("test/free")
 
     async def test_chat_applies_automatic_capability_floor_for_ambiguous_prompt(self):
         weak = model("test/weak")
@@ -609,6 +627,26 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             "total_latency_ms": 24,
             "usage": {"prompt_tokens": 6, "completion_tokens": 10},
             "attempts": [{"model": "test/strong", "success": True}],
+        })
+        with patch.object(api, "generate_response", generate):
+            response = await self.client.post(
+                "/api/chat",
+                json={"prompt": "What is a quasar?"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["constraints"]["min_capability"], 30)
+        self.assertEqual(payload["analysis"]["complexity_confidence"], "low")
+        self.assertEqual(payload["selected_model"], "test/strong")
+        rejected_weak = next(
+            item for item in payload["rejected"] if item["id"] == "test/weak"
+        )
+        self.assertTrue(any(
+            reason["constraint"] == "capability"
+            for reason in rejected_weak["reasons"]
+        ))
+
     async def test_image_request_filters_for_image_output_and_returns_images(self):
         image_model = model("test/image", price="0")
         image_model["architecture"]["output_modalities"] = ["text", "image"]
@@ -627,26 +665,14 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(api, "generate_response", generate):
             response = await self.client.post(
                 "/api/chat",
-                json={"prompt": "What is a quasar?"},
-            )
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["constraints"]["min_capability"], 30)
-        self.assertEqual(payload["analysis"]["complexity_confidence"], "low")
-        self.assertEqual(payload["selected_model"], "test/strong")
-        rejected_weak = next(item for item in payload["rejected"] if item["id"] == "test/weak")
-        self.assertTrue(any(
-            reason["constraint"] == "capability"
-            for reason in rejected_weak["reasons"]
-        ))
                 json={"prompt": "Make an image of a cat", "allow_paid": True},
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["constraints"]["input_modalities"], ["text"])
-        self.assertEqual(response.json()["constraints"]["output_modality"], "image")
-        self.assertEqual(response.json()["images"], [image_url])
+        payload = response.json()
+        self.assertEqual(payload["constraints"]["input_modalities"], ["text"])
+        self.assertEqual(payload["constraints"]["output_modality"], "image")
+        self.assertEqual(payload["images"], [image_url])
         self.assertEqual(
             generate.await_args.kwargs["output_modality"],
             "image",
@@ -772,6 +798,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("first chat secret", str(second_messages))
 
     async def test_chat_uses_extracted_pdf_as_text_model_input(self):
+        api.app.state.registry.models[0]["benchmarks"]["artificial_analysis"][
+            "intelligence_index"
+        ] = 45
         generate = AsyncMock(return_value={
             "model": "test/free",
             "content": "PDF summary.",
