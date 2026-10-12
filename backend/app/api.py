@@ -71,6 +71,10 @@ class PreferenceOverrideResetRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=255)
 
 
+class PreferredModelRequest(BaseModel):
+    model_id: str | None = Field(default=None, min_length=1, max_length=255)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     application.state.registry = ModelRegistry()
@@ -115,6 +119,7 @@ async def preference_models() -> dict[str, Any]:
     overrides = registry.get_overrides()
     models = registry.list_models()
     return {
+        "preferred_model_id": registry.get_preferred_model_id(),
         "models": [
             {
                 "id": model["id"],
@@ -131,6 +136,25 @@ async def preference_models() -> dict[str, Any]:
             for model in models
         ]
     }
+
+
+@app.post("/api/preferences/model")
+async def set_preferred_model(
+    preference: PreferredModelRequest,
+) -> dict[str, str | None]:
+    registry: ModelRegistry | None = getattr(app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Model catalogue is not ready.")
+    try:
+        registry.set_preferred_model_id(preference.model_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown model ID.") from exc
+    _write_log({
+        "event": "preferred_model_updated",
+        "model_id": preference.model_id,
+        "timestamp": time.time(),
+    })
+    return {"status": "updated", "preferred_model_id": preference.model_id}
 
 
 @app.post("/api/preferences/overrides")
@@ -544,12 +568,21 @@ async def chat(http_request: Request, request: ChatRequest) -> Any:
     effective_min_capability = (
         max(capability_floors) if capability_floors else None
     )
-    models = registry.list_models()
+    all_models = registry.list_models()
+    preferred_model_id = registry.get_preferred_model_id()
+    models = (
+        [
+            model for model in all_models
+            if model["id"] == preferred_model_id
+        ]
+        if preferred_model_id is not None
+        else all_models
+    )
 
     def filter_models(free_only: bool, paid_consent: bool):
         return run_pipeline(
             models,
-            task="general" if analysis["task"] == "reasoning" else analysis["task"],
+            task="reasoning" if analysis["task"] == "reasoning" else analysis["task"],
             min_capability=effective_min_capability,
             input_modalities=modalities,
             free_only=free_only,
@@ -590,6 +623,7 @@ async def chat(http_request: Request, request: ChatRequest) -> Any:
             "max_cost_usd": request.max_cost_usd,
             "free_only": not request.allow_paid,
             "mode": request.mode,
+            "preferred_model_id": preferred_model_id,
         },
         "stage_counts": pipeline["stage_counts"],
         "rejected": pipeline["rejected"],

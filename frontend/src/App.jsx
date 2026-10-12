@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import './App.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const DEFAULT_PREFERRED_LATENCY_MS = 10_000
 
 const suggestions = [
   { icon: '✦', title: 'Explain a complex idea', prompt: 'Explain how an inference gateway chooses the best model for a request.' },
@@ -80,10 +81,11 @@ function App() {
   const [error, setError] = useState('')
   const [health, setHealth] = useState(null)
   const [preferencesOpen, setPreferencesOpen] = useState(false)
+  const [preferredModelId, setPreferredModelId] = useState('')
+  const [savedPreferredModelId, setSavedPreferredModelId] = useState('')
   const [preferenceModels, setPreferenceModels] = useState([])
-  const [preferenceModelId, setPreferenceModelId] = useState('')
-  const [preferenceAvailable, setPreferenceAvailable] = useState(true)
-  const [preferenceLatency, setPreferenceLatency] = useState('')
+  const [preferredLatency, setPreferredLatency] = useState('')
+  const [savedPreferredLatency, setSavedPreferredLatency] = useState('')
   const [preferencesBusy, setPreferencesBusy] = useState(false)
   const [preferencesMessage, setPreferencesMessage] = useState('')
   const [preferencesError, setPreferencesError] = useState('')
@@ -165,11 +167,25 @@ function App() {
 
       if (!response.ok) {
         const detail = result.detail
+        const rejected = Array.isArray(result.rejected) ? result.rejected : []
+        const preferredId = result.constraints?.preferred_model_id
+        const rejectedPreferred = preferredId
+          ? rejected.find((item) => item.id === preferredId)
+          : null
+        const rejectionReasons = Array.isArray(rejectedPreferred?.reasons)
+          ? rejectedPreferred.reasons
+            .map((reason) => reason.reason)
+            .filter(Boolean)
+          : []
         setMessages((current) => [...current, {
           role: 'assistant',
           content: typeof detail === 'string'
             ? detail
-            : detail?.message || 'No model could complete this request while satisfying the constraints.',
+            : detail?.message || (
+              preferredId
+                ? `Your preferred model (${rejectedPreferred?.name || preferredId}) could not be used${rejectionReasons.length ? `: ${rejectionReasons.join('; ')}` : ' under this request’s constraints'}. No other model was tried.`
+                : 'No model could complete this request while satisfying the constraints.'
+            ),
           explanation: detail?.explanation || result,
           attempts: detail?.attempts || result.attempts,
           failed: true,
@@ -198,62 +214,62 @@ function App() {
         throw new Error(result.detail || 'Could not load user preferences.')
       }
       setPreferenceModels(result.models)
-      const selected = result.models.find((item) => item.id === preferenceModelId)
-        || result.models[0]
-      if (selected) {
-        setPreferenceModelId(selected.id)
-        setPreferenceAvailable(selected.available)
-        setPreferenceLatency(selected.measured_latency_ms ?? '')
-      }
+      setPreferredModelId(result.preferred_model_id || '')
+      setSavedPreferredModelId(result.preferred_model_id || '')
+      const selected = result.models.find(
+        (item) => item.id === result.preferred_model_id,
+      )
+      const latency = selected?.measured_latency_ms
+        ?? (result.preferred_model_id ? DEFAULT_PREFERRED_LATENCY_MS : '')
+      setPreferredLatency(latency)
+      setSavedPreferredLatency(latency)
       setPreferencesError('')
     } catch (requestError) {
       setPreferencesError(requestError.message || 'Could not load user preferences.')
     }
   }
 
-  async function savePreferenceOverride() {
-    if (!preferenceModelId || preferencesBusy) return
+  async function savePreferredModel() {
+    if (preferencesBusy || (!preferredModelId && preferredLatency !== '')) return
     setPreferencesBusy(true)
     setPreferencesMessage('')
     setPreferencesError('')
     try {
-      const response = await fetch(`${API_BASE}/api/preferences/overrides`, {
+      if (preferredModelId) {
+        const overrideResponse = await fetch(`${API_BASE}/api/preferences/overrides`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model_id: preferredModelId,
+            available: true,
+            measured_latency_ms: preferredLatency === ''
+              ? DEFAULT_PREFERRED_LATENCY_MS
+              : Number(preferredLatency),
+          }),
+        })
+        const overrideResult = await overrideResponse.json()
+        if (!overrideResponse.ok) {
+          throw new Error(overrideResult.detail || 'Could not save latency preference.')
+        }
+      }
+
+      const response = await fetch(`${API_BASE}/api/preferences/model`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model_id: preferenceModelId,
-          available: preferenceAvailable,
-          measured_latency_ms: preferenceLatency === '' ? null : Number(preferenceLatency),
+          model_id: preferredModelId || null,
         }),
       })
       const result = await response.json()
-      if (!response.ok) throw new Error(result.detail || 'Could not save override.')
+      if (!response.ok) throw new Error(result.detail || 'Could not save preferred model.')
+      setSavedPreferredModelId(result.preferred_model_id || '')
+      setSavedPreferredLatency(preferredLatency)
       await refreshPreferenceModels()
-      setPreferencesMessage('Saved globally. This affects routing for every visitor.')
+      setPreferencesMessage(result.preferred_model_id
+        ? `Model and latency preferences saved globally. Only this model will be used (default latency: ${preferredLatency || DEFAULT_PREFERRED_LATENCY_MS} ms).`
+        : 'Automatic routing restored globally.')
     } catch (requestError) {
-      setPreferencesError(requestError.message || 'Could not save override.')
-    } finally {
-      setPreferencesBusy(false)
-    }
-  }
-
-  async function resetPreferenceOverride() {
-    if (!preferenceModelId || preferencesBusy) return
-    setPreferencesBusy(true)
-    setPreferencesMessage('')
-    setPreferencesError('')
-    try {
-      const response = await fetch(`${API_BASE}/api/preferences/overrides/reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: preferenceModelId }),
-      })
-      const result = await response.json()
-      if (!response.ok) throw new Error(result.detail || 'Could not reset override.')
-      await refreshPreferenceModels()
-      setPreferencesMessage('Override reset to catalogue defaults.')
-    } catch (requestError) {
-      setPreferencesError(requestError.message || 'Could not reset override.')
+      setPreferencesError(requestError.message || 'Could not save preferred model.')
     } finally {
       setPreferencesBusy(false)
     }
@@ -323,63 +339,69 @@ function App() {
           <div className="preferences-panel-heading">
             <div>
               <h2>User preferences</h2>
-              <p>Change model availability and simulated latency for routing.</p>
+              <p>Choose the model and latency preference used for routing.</p>
             </div>
             <span>Shared on this backend · any visitor can change</span>
           </div>
           <div className="preferences-controls">
             <label>
-              <span>Model</span>
+              <span>Preferred model</span>
               <select
-                value={preferenceModelId}
+                value={preferredModelId}
                 onChange={(event) => {
-                  const selected = preferenceModels.find((item) => item.id === event.target.value)
-                  setPreferenceModelId(event.target.value)
-                  setPreferenceAvailable(selected?.available ?? true)
-                  setPreferenceLatency(selected?.measured_latency_ms ?? '')
+                  const selected = preferenceModels.find(
+                    (item) => item.id === event.target.value,
+                  )
+                  setPreferredModelId(event.target.value)
+                  setPreferredLatency(event.target.value
+                    ? selected?.measured_latency_ms ?? DEFAULT_PREFERRED_LATENCY_MS
+                    : '')
                   setPreferencesMessage('')
                 }}
               >
+                <option value="">Automatic routing</option>
                 {preferenceModels.map((item) => (
                   <option value={item.id} key={item.id}>
-                    {item.name}{item.overridden ? ' · overridden' : ''}
+                    {item.name}
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              <span>Simulated latency (ms)</span>
+              <span>Preferred model latency (ms)</span>
               <input
                 type="number"
                 min="0"
                 max="120000"
                 step="100"
-                value={preferenceLatency}
-                onChange={(event) => setPreferenceLatency(event.target.value)}
-                placeholder="Unknown"
+                value={preferredLatency}
+                onChange={(event) => {
+                  setPreferredLatency(event.target.value)
+                  setPreferencesMessage('')
+                }}
+                placeholder={preferredModelId
+                  ? `${DEFAULT_PREFERRED_LATENCY_MS} default`
+                  : 'Select a model first'}
+                disabled={!preferredModelId}
               />
-            </label>
-            <label className="preferences-availability">
-              <input
-                type="checkbox"
-                checked={preferenceAvailable}
-                onChange={(event) => setPreferenceAvailable(event.target.checked)}
-              />
-              <span>Model available</span>
             </label>
             <div className="preferences-actions">
-              <button type="button" onClick={savePreferenceOverride} disabled={preferencesBusy || !preferenceModelId}>
-                Save globally
-              </button>
               <button
-                className="preferences-reset"
                 type="button"
-                onClick={resetPreferenceOverride}
-                disabled={preferencesBusy || !preferenceModels.find((item) => item.id === preferenceModelId)?.overridden}
+                onClick={savePreferredModel}
+                disabled={preferencesBusy || (
+                  preferredModelId === savedPreferredModelId
+                  && preferredLatency === savedPreferredLatency
+                )}
               >
-                Reset to catalogue
+                Save preferences
               </button>
             </div>
+            <p className="preferences-note">
+              {preferredModelId
+                ? `Only this model will be tried. If it cannot handle a request or fails, no fallback model is used. Default latency is ${DEFAULT_PREFERRED_LATENCY_MS} ms when no catalogue measurement is available.`
+                : 'Automatic routing chooses among eligible models. Select a model to set its latency preference.'}
+            </p>
           </div>
           {preferencesError && <p className="preferences-status preferences-error">{preferencesError}</p>}
           {preferencesMessage && <p className="preferences-status">{preferencesMessage}</p>}
@@ -637,7 +659,8 @@ function App() {
 function Explanation({ data }) {
   const analysis = data.analysis
   const constraints = data.constraints || {}
-  const rejected = data.rejected || []
+  const rejected = Array.isArray(data.rejected) ? data.rejected : []
+  const rankedModels = Array.isArray(data.ranked_models) ? data.ranked_models : []
   return (
     <div className="explanation-content">
       {analysis && (
@@ -660,7 +683,7 @@ function Explanation({ data }) {
           Checked {data.stage_counts.catalogue} models · {data.stage_counts.eligible} eligible
         </p>
       )}
-      {data.ranked_models.slice(0, 5).map((model, index) => (
+      {rankedModels.slice(0, 5).map((model, index) => (
         <div className="rejection-row" key={model.id}>
           <span>{index + 1}. {model.name}{model.id === data.selected_model ? ' · selected' : ''}</span>
           <span>
@@ -670,8 +693,8 @@ function Explanation({ data }) {
           </span>
         </div>
       ))}
-      {data.ranked_models.length > 5 && (
-        <p>Showing 5 of {data.ranked_models.length} ranked models.</p>
+      {rankedModels.length > 5 && (
+        <p>Showing 5 of {rankedModels.length} ranked models.</p>
       )}
       {constraints && (
         <div className="constraint-tags">
@@ -711,7 +734,10 @@ function Explanation({ data }) {
           {rejected.slice(0, 5).map((item) => (
             <div className="rejection-row" key={item.id}>
               <span>{item.name || item.id}</span>
-              <span>{item.reasons.map((reason) => reason.reason).join(' · ')}</span>
+              <span>              {(Array.isArray(item.reasons) ? item.reasons : [])
+                .map((reason) => reason.reason)
+                .filter(Boolean)
+                .join(' · ')}</span>
             </div>
           ))}
           {rejected.length > 5 && <p>Showing 5 of {rejected.length} rejected models.</p>}

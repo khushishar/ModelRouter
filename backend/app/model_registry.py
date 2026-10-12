@@ -6,7 +6,11 @@ import tempfile
 from threading import RLock
 from typing import Any
 
-from app.config import CATALOGUE_PATH, MODEL_OVERRIDES_PATH
+from app.config import (
+    CATALOGUE_PATH,
+    MODEL_OVERRIDES_PATH,
+    MODEL_PREFERENCES_PATH,
+)
 
 logger = logging.getLogger(__name__)
 _OVERRIDE_LOCK = RLock()
@@ -178,26 +182,70 @@ class ModelRegistry:
             overrides.pop(model_id, None)
             self._write_overrides(overrides)
 
+    def get_preferred_model_id(self) -> str | None:
+        preferences = self._load_preferences()
+        model_id = preferences.get("preferred_model_id")
+        if model_id is not None and (
+            not isinstance(model_id, str)
+            or model_id not in {model["id"] for model in self.models}
+        ):
+            raise ValueError("Preferred model is not present in the catalogue")
+        return model_id
+
+    def set_preferred_model_id(self, model_id: str | None) -> None:
+        if model_id is not None and model_id not in {
+            model["id"] for model in self.models
+        }:
+            raise KeyError(model_id)
+
+        with _OVERRIDE_LOCK:
+            preferences = self._load_preferences()
+            preferences["preferred_model_id"] = model_id
+            self._write_json(MODEL_PREFERENCES_PATH, preferences)
+
+    @staticmethod
+    def _load_preferences() -> dict[str, Any]:
+        try:
+            with MODEL_PREFERENCES_PATH.open("r", encoding="utf-8") as file:
+                preferences = json.load(file)
+        except FileNotFoundError:
+            preferences = {}
+        except (OSError, json.JSONDecodeError):
+            logger.exception(
+                "Unable to read model preferences: %s",
+                MODEL_PREFERENCES_PATH,
+            )
+            raise
+
+        if not isinstance(preferences, dict):
+            raise ValueError("Model preferences must be a JSON object")
+        return preferences
+
     @staticmethod
     def _write_overrides(overrides: dict[str, Any]) -> None:
+        ModelRegistry._write_json(MODEL_OVERRIDES_PATH, overrides)
+
+    @staticmethod
+    def _write_json(path, value: dict[str, Any]) -> None:
         temporary_path = None
         try:
-            MODEL_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
-                dir=MODEL_OVERRIDES_PATH.parent,
-                prefix=f".{MODEL_OVERRIDES_PATH.name}.",
+                dir=path.parent,
+                prefix=f".{path.name}.",
                 suffix=".tmp",
                 delete=False,
             ) as file:
                 temporary_path = file.name
-                json.dump(overrides, file, ensure_ascii=False, indent=2)
+                json.dump(value, file, ensure_ascii=False, indent=2)
                 file.write("\n")
-            os.replace(temporary_path, MODEL_OVERRIDES_PATH)
+            os.replace(temporary_path, path)
         except OSError:
             logger.exception(
-                "Unable to write model overrides: %s", MODEL_OVERRIDES_PATH
+                "Unable to write JSON file: %s",
+                path,
             )
             raise
         finally:

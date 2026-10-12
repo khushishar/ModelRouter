@@ -86,7 +86,7 @@ def analyze_prompt(
         complexity_confidence = "low"
         complexity_signals.append("ambiguous_prompt_defaulted_to_medium")
 
-    task = "general"
+    task = "reasoning"
     output_modality = "text"
     if IMAGE_GENERATION_PATTERN.search(normalized):
         task = "image_generation"

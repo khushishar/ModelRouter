@@ -21,6 +21,14 @@ def get_capability(model: dict[str, Any], task: str) -> float | None:
     return _number(value)
 
 
+def supports_reasoning(model: dict[str, Any]) -> bool:
+    params = set(model.get("supported_parameters") or [])
+    return bool(
+        {"reasoning", "include_reasoning"} & params
+        or (model.get("reasoning") or {}).get("default_enabled") is True
+    )
+
+
 def get_price(value: Any) -> float | None:
     """OpenRouter prices are commonly returned as strings per token."""
     return _number(value)
@@ -69,7 +77,7 @@ def _latency(model: dict[str, Any]) -> float | None:
 def run_pipeline(
     models: list[dict[str, Any]],
     *,
-    task: str = "general",
+    task: str = "reasoning",
     min_capability: float | None = None,
     input_modality: str = "text",
     input_modalities: list[str] | None = None,
@@ -117,10 +125,11 @@ def run_pipeline(
         capability = get_capability(model, task)
         if min_capability is not None:
             if capability is None:
-                reasons.append({
-                    "constraint": "capability",
-                    "reason": f"No benchmark available for task: {task}",
-                })
+                if task != "reasoning" or not supports_reasoning(model):
+                    reasons.append({
+                        "constraint": "capability",
+                        "reason": f"No benchmark available for task: {task}",
+                    })
             elif capability < min_capability:
                 reasons.append({
                     "constraint": "capability",

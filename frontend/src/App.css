@@ -405,6 +405,10 @@
   gap: 12px;
 }
 
+.preferences-controls {
+  flex-wrap: wrap;
+}
+
 .preferences-panel-heading {
   justify-content: space-between;
   margin-bottom: 13px;
@@ -429,9 +433,17 @@
   white-space: nowrap;
 }
 
-.preferences-controls > label:not(.preferences-availability) {
+.preferences-controls > label {
   flex: 1;
   min-width: 0;
+}
+
+.preferences-note {
+  flex: 1 0 100%;
+  margin: -3px 0 0;
+  color: #858893;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .preferences-controls > label > span:first-child {
@@ -452,15 +464,6 @@
   background: #15161b;
   font: inherit;
   font-size: 11px;
-}
-
-.preferences-availability {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #c6c7cd;
-  font-size: 10px;
-  white-space: nowrap;
 }
 
 .preferences-actions {

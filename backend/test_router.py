@@ -195,6 +195,42 @@ class ConstraintTests(unittest.TestCase):
             for reason in pipeline["rejected"][0]["reasons"]
         ))
 
+    def test_reasoning_support_is_fallback_when_task_benchmark_is_missing(self):
+        reasoning_model = model("test/reasoning", reasoning=True)
+        reasoning_model.pop("benchmarks")
+        pipeline = run_pipeline(
+            [reasoning_model],
+            task="reasoning",
+            min_capability=30,
+            required_context=1024,
+        )
+
+        self.assertEqual([item["id"] for item in pipeline["eligible"]], [
+            "test/reasoning",
+        ])
+        self.assertIsNone(pipeline["eligible"][0]["_router_capability"])
+
+    def test_reasoning_fallback_does_not_bypass_low_numeric_benchmark(self):
+        reasoning_model = model("test/weak-reasoning", reasoning=True)
+        reasoning_model["benchmarks"]["artificial_analysis"][
+            "intelligence_index"
+        ] = 20
+        pipeline = run_pipeline(
+            [reasoning_model],
+            task="reasoning",
+            min_capability=30,
+            required_context=1024,
+        )
+
+        self.assertEqual(pipeline["eligible"], [])
+        self.assertIn(
+            "Capability 20 is below minimum 30",
+            [
+                reason["reason"]
+                for reason in pipeline["rejected"][0]["reasons"]
+            ],
+        )
+
     def test_image_generation_requires_supported_and_priced_image_output(self):
         text_only = model("test/text-only")
         image_capable = model("test/image", price="0")
@@ -338,6 +374,37 @@ class RegistryOverrideTests(unittest.TestCase):
                 registry.clear_override("test/model")
                 self.assertTrue(registry.list_models()[0]["available"])
                 self.assertEqual(registry.get_overrides(), {})
+
+    def test_registry_persists_preferred_model_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            catalogue_path = Path(directory) / "catalogue.json"
+            preferences_path = Path(directory) / "preferences.json"
+            catalogue_path.write_text(
+                json.dumps({"data": [{
+                    "id": "test/model",
+                    "context_length": 4096,
+                    "architecture": {},
+                    "pricing": {"prompt": "0", "completion": "0"},
+                }]}),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(model_registry, "CATALOGUE_PATH", catalogue_path),
+                patch.object(
+                    model_registry,
+                    "MODEL_PREFERENCES_PATH",
+                    preferences_path,
+                ),
+            ):
+                registry = model_registry.ModelRegistry()
+                self.assertIsNone(registry.get_preferred_model_id())
+                registry.set_preferred_model_id("test/model")
+                self.assertEqual(
+                    registry.get_preferred_model_id(),
+                    "test/model",
+                )
+                registry.set_preferred_model_id(None)
+                self.assertIsNone(registry.get_preferred_model_id())
 
     def test_registry_rejects_invalid_latency_override(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -508,7 +575,11 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         api.app.state.registry = type(
             "Registry",
             (),
-            {"models": [model()], "list_models": lambda self: list(self.models)},
+            {
+                "models": [model()],
+                "list_models": lambda self: list(self.models),
+                "get_preferred_model_id": lambda self: None,
+            },
         )()
         api.app.state.conversations = {}
         self.log_patch = patch.object(api, "_write_log")
@@ -545,8 +616,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         registry.models = [model("test/free", latency=100)]
         registry.list_models = lambda: registry.models
         registry.get_overrides = lambda: {}
+        registry.get_preferred_model_id = lambda: None
         registry.set_override = Mock()
         registry.clear_override = Mock()
+        registry.set_preferred_model_id = Mock()
         api.app.state.registry = registry
 
         listed = await self.client.get("/api/preferences/models")
@@ -574,11 +647,73 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reset.status_code, 200)
         registry.clear_override.assert_called_once_with("test/free")
 
+    async def test_preferred_model_is_saved_globally(self):
+        registry = Mock()
+        registry.models = [model("test/selected")]
+        registry.set_preferred_model_id.return_value = None
+        api.app.state.registry = registry
+
+        response = await self.client.post(
+            "/api/preferences/model",
+            json={"model_id": "test/selected"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        registry.set_preferred_model_id.assert_called_once_with("test/selected")
+
+    async def test_chat_uses_only_the_globally_preferred_model(self):
+        preferred = model("test/preferred")
+        fallback = model("test/fallback", latency=1)
+        api.app.state.registry.models = [preferred, fallback]
+        api.app.state.registry.get_preferred_model_id = lambda: "test/preferred"
+        generate = AsyncMock(return_value={
+            "model": "test/preferred",
+            "content": "Hello.",
+            "latency_ms": 24,
+            "total_latency_ms": 24,
+            "usage": {},
+            "attempts": [],
+        })
+
+        with patch.object(api, "generate_response", generate):
+            response = await self.client.post(
+                "/api/chat",
+                json={"prompt": "Say hello"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["id"] for item in generate.await_args.args[1]],
+            ["test/preferred"],
+        )
+        self.assertEqual(
+            response.json()["constraints"]["preferred_model_id"],
+            "test/preferred",
+        )
+
+    async def test_chat_does_not_fallback_when_preferred_model_is_ineligible(self):
+        preferred = model("test/preferred", context=128)
+        fallback = model("test/fallback")
+        api.app.state.registry.models = [preferred, fallback]
+        api.app.state.registry.get_preferred_model_id = lambda: "test/preferred"
+        generate = AsyncMock()
+
+        with patch.object(api, "generate_response", generate):
+            response = await self.client.post(
+                "/api/chat",
+                json={"prompt": "Say hello"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        generate.assert_not_awaited()
+
     async def test_preferences_are_available_to_remote_clients(self):
         registry = Mock()
         registry.models = [model("test/free", latency=100)]
         registry.list_models.return_value = registry.models
         registry.get_overrides.return_value = {}
+        registry.get_preferred_model_id.return_value = None
+        registry.set_preferred_model_id.return_value = None
         api.app.state.registry = registry
         remote_client = httpx.AsyncClient(
             transport=httpx.ASGITransport(

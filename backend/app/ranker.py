@@ -1,6 +1,8 @@
 from math import isfinite
 from typing import Any
 
+from app.constraints import supports_reasoning
+
 
 def _numeric(value: Any) -> float | None:
     try:
@@ -36,14 +38,6 @@ def _cost(model: dict[str, Any]) -> float:
     return value if value is not None else float("inf")
 
 
-def _supports_reasoning(model: dict[str, Any]) -> bool:
-    params = set(model.get("supported_parameters") or [])
-    return bool(
-        {"reasoning", "include_reasoning"} & params
-        or (model.get("reasoning") or {}).get("default_enabled") is True
-    )
-
-
 def _utility(values: list[float | None], *, higher_is_better: bool) -> list[float]:
     """Normalize one metric to 0-1 utility; missing measurements score 0."""
     known = [value for value in values if value is not None]
@@ -68,7 +62,7 @@ def _utility(values: list[float | None], *, higher_is_better: bool) -> list[floa
 def rank_models(
     models: list[dict[str, Any]],
     mode: str = "fast",
-    task: str = "general",
+    task: str = "reasoning",
 ) -> list[dict[str, Any]]:
     """Rank only eligible models; ranking never changes their eligibility."""
     if mode not in {"fast", "thinking"}:
@@ -84,7 +78,7 @@ def rank_models(
     )
     capability_utility = _utility(capabilities, higher_is_better=True)
     reasoning_utility = [
-        1.0 if _supports_reasoning(model) else 0.0 for model in models
+        1.0 if supports_reasoning(model) else 0.0 for model in models
     ]
 
     if mode == "fast":

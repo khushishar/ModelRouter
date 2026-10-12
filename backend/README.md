@@ -35,10 +35,13 @@ counts are approximate because provider tokenizers differ. Ambiguous short
 prompts default to medium complexity instead of being assumed simple. Medium
 and high complexity apply minimum Artificial Analysis benchmark floors of 30
 and 40 respectively; a caller-specified floor can only raise that minimum.
-Models without the relevant benchmark are rejected when a floor applies. These
-heuristics are conservative estimates, not a substitute for an explicit
-capability requirement. The router rejects models that fail modality, price,
-context, capability, availability, or measured-latency constraints, ranks the
+Models without the relevant benchmark are rejected when a floor applies,
+except reasoning-capable models on reasoning tasks, which use declared
+reasoning support as a qualitative fallback when no numeric benchmark exists.
+That fallback is not treated as a benchmark score. These heuristics are
+conservative estimates, not a substitute for an explicit capability
+requirement. The router rejects models that fail modality, price, context,
+capability, availability, or measured-latency constraints, ranks the
 survivors, and shares one latency deadline across inference attempts. Unknown
 catalogue latency is not presumed fast; the live deadline remains a hard limit.
 Supported attachments are text, PDF, and image files. PDFs are converted to
@@ -62,15 +65,19 @@ Routing decisions, rejection reasons, model attempts, and cost/latency
 metadata are appended to `data/routing_logs.jsonl`. User prompt and response
 contents are deliberately not written to the routing log.
 
-The frontend's **User preferences** panel changes model availability or
-simulated latency. Preferences are global to the backend instance: all visitors
-served by that instance see the same overrides, and anyone can change or reset
-them. The unauthenticated endpoints are intended only for this public demo and
-must be protected before using the service in production. Overrides are stored
-in `data/model_overrides.json`, reloaded for each chat request, and can be reset
-to catalogue defaults from the panel. Render's local filesystem may be
-ephemeral, and multiple backend instances do not share this file; use a shared
-persistent database for durable multi-instance preferences.
+The frontend's **User preferences** panel can select one preferred model for all
+requests or restore automatic routing. A preferred model is the only candidate
+considered: if it fails constraints or inference, the router does not fall back
+to another model. A latency override can be set for the preferred model and is
+used by latency-budget checks and routing metadata. If no catalogue latency
+exists, the frontend pre-fills a 10,000 ms default. Preferences are global to
+the backend instance; all visitors share them, and anyone can change them. The
+unauthenticated endpoints are intended only for this public demo and must be
+protected before production use. Latency overrides are stored in
+`data/model_overrides.json`; the preferred model is stored in
+`data/model_preferences.json`. Render's local filesystem may be ephemeral, and
+multiple backend instances do not share these files; use a shared persistent
+database for durable multi-instance preferences.
 
 Overrides can also be edited directly in `data/model_overrides.json`:
 
